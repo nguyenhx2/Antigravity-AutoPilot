@@ -20,75 +20,94 @@ let _cachedStatus = null;
 let autoPilotEnabled = true;
 /** @type {vscode.OutputChannel} */
 let outputChannel;
+/** @type {vscode.ExtensionContext} */
+let _ctx;
 
 // ─── Dangerous Command Blocking ───────────────────────────────────────────────
 
 /**
  * Built-in dangerous command patterns.
  * Covers Linux/macOS/Windows destructive commands.
- * Each entry: { pattern: RegExp, label: string, os: string[] }
+ * Each entry: { id: string, pattern: RegExp, label: string, os: string[] }
  */
 const BUILTIN_DANGEROUS_PATTERNS = [
   // ── Linux / macOS ──
-  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--force\s+).*\/(\s|$)/, label: 'rm -rf /', os: ['linux', 'darwin'] },
-  { pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/(\s|$)/, label: 'rm -r / (root wipe)', os: ['linux', 'darwin'] },
-  { pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+~(\s|$|\/)/, label: 'rm -r ~ (home wipe)', os: ['linux', 'darwin'] },
-  { pattern: /rm\s+.*--no-preserve-root/, label: 'rm --no-preserve-root', os: ['linux', 'darwin'] },
-  { pattern: /:\(\)\s*\{.*:\|:&\s*\};\s*:/, label: 'Fork bomb :(){:|:&};:', os: ['linux', 'darwin'] },
-  { pattern: /mkfs\.(ext[234]|xfs|btrfs|vfat|ntfs)\s+\/dev\/(sd|hd|nvme|vd)/, label: 'mkfs on block device', os: ['linux', 'darwin'] },
-  { pattern: /dd\s+.*of=\/dev\/(sd[a-z]|hd[a-z]|nvme\d+|zero|null)/, label: 'dd overwrite device', os: ['linux', 'darwin'] },
-  { pattern: />\s*\/dev\/(sd[a-z]|hd[a-z]|nvme\d+)/, label: 'Redirect to block device', os: ['linux', 'darwin'] },
-  { pattern: /shred\s+(-[a-zA-Z]*n\s*\d+\s+)?\/dev\//, label: 'shred device', os: ['linux', 'darwin'] },
-  { pattern: /mv\s+.*\s+\/dev\/null/, label: 'mv to /dev/null', os: ['linux', 'darwin'] },
-  { pattern: /chmod\s+-[rR]\s+000\s+\//, label: 'chmod 000 recursive on /', os: ['linux', 'darwin'] },
-  { pattern: /chmod\s+777\s+-R\s+\/(\s|$)/, label: 'chmod 777 -R /', os: ['linux', 'darwin'] },
-  { pattern: /chown\s+.*-R\s+.*\s+\/(\s|$)/, label: 'chown -R on /', os: ['linux', 'darwin'] },
-  { pattern: /passwd\s+root\s*$/, label: 'passwd root (no new password)', os: ['linux', 'darwin'] },
-  { pattern: /sudo\s+rm\s+-[a-zA-Z]*rf?\s+\/(\s|$)/, label: 'sudo rm -rf /', os: ['linux', 'darwin'] },
-  { pattern: /wget\s+.*\|\s*(ba)?sh/, label: 'wget pipe to shell', os: ['linux', 'darwin'] },
-  { pattern: /curl\s+.*\|\s*(ba)?sh/, label: 'curl pipe to shell', os: ['linux', 'darwin'] },
-  { pattern: /base64\s+-d.*\|\s*(ba)?sh/, label: 'base64 decode pipe to shell', os: ['linux', 'darwin'] },
-  { pattern: /eval\s+\$\(.*\)/, label: 'eval $(...) subshell', os: ['linux', 'darwin'] },
-  { pattern: /fdisk\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'fdisk on disk', os: ['linux', 'darwin'] },
-  { pattern: /parted\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'parted on disk', os: ['linux', 'darwin'] },
-  { pattern: /wipefs\s+.*\/dev\//, label: 'wipefs on device', os: ['linux', 'darwin'] },
-  { pattern: /truncate\s+-s\s+0\s+\/dev\//, label: 'truncate device to 0', os: ['linux', 'darwin'] },
-  { pattern: /echo\s+.*>\s*\/boot\//, label: 'overwrite /boot/', os: ['linux', 'darwin'] },
-  { pattern: /cat\s+\/dev\/zero\s+>\s+\//, label: 'cat /dev/zero to /', os: ['linux', 'darwin'] },
-  { pattern: /umount\s+-a/, label: 'umount -a (unmount all)', os: ['linux', 'darwin'] },
-  { pattern: /init\s+0/, label: 'init 0 (halt system)', os: ['linux', 'darwin'] },
-  { pattern: /poweroff|halt\s*$/, label: 'System shutdown command', os: ['linux', 'darwin'] },
-  { pattern: /iptables\s+-F/, label: 'iptables -F (flush all rules)', os: ['linux', 'darwin'] },
-  { pattern: /ufw\s+--force\s+reset/, label: 'ufw --force reset', os: ['linux', 'darwin'] },
+  { id: 'rm-rf-root', pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--force\s+).*\/(\\s|$)/, label: 'rm -rf /', os: ['linux', 'darwin'] },
+  { id: 'rm-r-root', pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/(\s|$)/, label: 'rm -r / (root wipe)', os: ['linux', 'darwin'] },
+  { id: 'rm-r-home', pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+~(\s|$|\/)/, label: 'rm -r ~ (home wipe)', os: ['linux', 'darwin'] },
+  { id: 'rm-no-preserve', pattern: /rm\s+.*--no-preserve-root/, label: 'rm --no-preserve-root', os: ['linux', 'darwin'] },
+  { id: 'fork-bomb', pattern: /:\(\)\s*\{.*:\|:&\s*\};\s*:/, label: 'Fork bomb :(){:|:&};:', os: ['linux', 'darwin'] },
+  { id: 'mkfs-device', pattern: /mkfs\.(ext[234]|xfs|btrfs|vfat|ntfs)\s+\/dev\/(sd|hd|nvme|vd)/, label: 'mkfs on block device', os: ['linux', 'darwin'] },
+  { id: 'dd-overwrite', pattern: /dd\s+.*of=\/dev\/(sd[a-z]|hd[a-z]|nvme\d+|zero|null)/, label: 'dd overwrite device', os: ['linux', 'darwin'] },
+  { id: 'redirect-block', pattern: />\s*\/dev\/(sd[a-z]|hd[a-z]|nvme\d+)/, label: 'Redirect to block device', os: ['linux', 'darwin'] },
+  { id: 'shred-device', pattern: /shred\s+(-[a-zA-Z]*n\s*\d+\s+)?\/dev\//, label: 'shred device', os: ['linux', 'darwin'] },
+  { id: 'mv-devnull', pattern: /mv\s+.*\s+\/dev\/null/, label: 'mv to /dev/null', os: ['linux', 'darwin'] },
+  { id: 'chmod-000', pattern: /chmod\s+-[rR]\s+000\s+\//, label: 'chmod 000 recursive on /', os: ['linux', 'darwin'] },
+  { id: 'chmod-777', pattern: /chmod\s+777\s+-R\s+\/(\s|$)/, label: 'chmod 777 -R /', os: ['linux', 'darwin'] },
+  { id: 'chown-root', pattern: /chown\s+.*-R\s+.*\s+\/(\s|$)/, label: 'chown -R on /', os: ['linux', 'darwin'] },
+  { id: 'passwd-root', pattern: /passwd\s+root\s*$/, label: 'passwd root', os: ['linux', 'darwin'] },
+  { id: 'sudo-rm-rf', pattern: /sudo\s+rm\s+-[a-zA-Z]*rf?\s+\/(\s|$)/, label: 'sudo rm -rf /', os: ['linux', 'darwin'] },
+  { id: 'wget-pipe-sh', pattern: /wget\s+.*\|\s*(ba)?sh/, label: 'wget pipe to shell', os: ['linux', 'darwin'] },
+  { id: 'curl-pipe-sh', pattern: /curl\s+.*\|\s*(ba)?sh/, label: 'curl pipe to shell', os: ['linux', 'darwin'] },
+  { id: 'base64-pipe-sh', pattern: /base64\s+-d.*\|\s*(ba)?sh/, label: 'base64 decode pipe to shell', os: ['linux', 'darwin'] },
+  { id: 'eval-subshell', pattern: /eval\s+\$\(.*\)/, label: 'eval $(...) subshell', os: ['linux', 'darwin'] },
+  { id: 'fdisk-disk', pattern: /fdisk\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'fdisk on disk', os: ['linux', 'darwin'] },
+  { id: 'parted-disk', pattern: /parted\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'parted on disk', os: ['linux', 'darwin'] },
+  { id: 'wipefs-dev', pattern: /wipefs\s+.*\/dev\//, label: 'wipefs on device', os: ['linux', 'darwin'] },
+  { id: 'truncate-dev', pattern: /truncate\s+-s\s+0\s+\/dev\//, label: 'truncate device to 0', os: ['linux', 'darwin'] },
+  { id: 'echo-boot', pattern: /echo\s+.*>\s*\/boot\//, label: 'overwrite /boot/', os: ['linux', 'darwin'] },
+  { id: 'cat-devzero', pattern: /cat\s+\/dev\/zero\s+>\s+\//, label: 'cat /dev/zero to /', os: ['linux', 'darwin'] },
+  { id: 'umount-all', pattern: /umount\s+-a/, label: 'umount -a (unmount all)', os: ['linux', 'darwin'] },
+  { id: 'init-0', pattern: /init\s+0/, label: 'init 0 (halt system)', os: ['linux', 'darwin'] },
+  { id: 'poweroff', pattern: /poweroff|halt\s*$/, label: 'System shutdown command', os: ['linux', 'darwin'] },
+  { id: 'iptables-flush', pattern: /iptables\s+-F/, label: 'iptables -F (flush all rules)', os: ['linux', 'darwin'] },
+  { id: 'ufw-reset', pattern: /ufw\s+--force\s+reset/, label: 'ufw --force reset', os: ['linux', 'darwin'] },
   // ── macOS specific ──
-  { pattern: /diskutil\s+(eraseDisk|eraseVolume|partitionDisk)\s+/, label: 'diskutil erase/repartition', os: ['darwin'] },
-  { pattern: /diskutil\s+zeroDisk\s+/, label: 'diskutil zeroDisk', os: ['darwin'] },
-  { pattern: /csrutil\s+disable/, label: 'csrutil disable (SIP)', os: ['darwin'] },
+  { id: 'diskutil-erase', pattern: /diskutil\s+(eraseDisk|eraseVolume|partitionDisk)\s+/, label: 'diskutil erase/repartition', os: ['darwin'] },
+  { id: 'diskutil-zero', pattern: /diskutil\s+zeroDisk\s+/, label: 'diskutil zeroDisk', os: ['darwin'] },
+  { id: 'csrutil-disable', pattern: /csrutil\s+disable/, label: 'csrutil disable (SIP)', os: ['darwin'] },
   // ── Windows (PowerShell / cmd) ──
-  { pattern: /Format-Volume\s+.*-Confirm:\s*\$false/i, label: 'Format-Volume without confirm', os: ['win32'] },
-  { pattern: /format\s+[cC]:\s*\/[qQy]/i, label: 'format C: /q or /y', os: ['win32'] },
-  { pattern: /format\s+[a-zA-Z]:\s*\/[qQy]/i, label: 'format <drive> /q or /y', os: ['win32'] },
-  { pattern: /del\s+\/[fsqSFQ]+\s+[cC]:\\/i, label: 'del /f/s/q C:\\ (wipe drive)', os: ['win32'] },
-  { pattern: /rd\s+\/[sq]+\s+[cC]:\\/i, label: 'rd /s/q C:\\ (remove all)', os: ['win32'] },
-  { pattern: /Remove-Item\s+.*-Recurse\s+.*-Force.*[cC]:\\/i, label: 'Remove-Item -Recurse -Force C:\\', os: ['win32'] },
-  { pattern: /Remove-Item\s+.*-Recurse\s+.*-Force\s+\/\s/i, label: 'Remove-Item -Recurse -Force /', os: ['win32'] },
-  { pattern: /Set-ExecutionPolicy\s+Unrestricted\s+-Force/i, label: 'Set-ExecutionPolicy Unrestricted -Force', os: ['win32'] },
-  { pattern: /reg\s+(delete|add)\s+HKLM\\SYSTEM\\CurrentControlSet/i, label: 'reg delete HKLM\\SYSTEM critical', os: ['win32'] },
-  { pattern: /bcdedit\s+\/deletevalue/i, label: 'bcdedit /deletevalue (boot config)', os: ['win32'] },
-  { pattern: /bcdedit\s+\/set.*safeboot/i, label: 'bcdedit /set safeboot (forces safe mode)', os: ['win32'] },
-  { pattern: /cipher\s+\/w:[cC]:\\/i, label: 'cipher /w:C:\\ (wipe free space)', os: ['win32'] },
-  { pattern: /sfc\s+\/scannow.*\/offwindir/i, label: 'sfc offline (system repair risk)', os: ['win32'] },
-  { pattern: /wmic\s+.*delete/i, label: 'wmic delete', os: ['win32'] },
-  { pattern: /Invoke-Expression\s+\(.*Download.*\)/i, label: 'IEX download-and-execute', os: ['win32'] },
-  { pattern: /iex\s+\(.*WebClient.*DownloadString/i, label: 'iex WebClient DownloadString (remote exec)', os: ['win32'] },
-  { pattern: /powershell\s+.*-EncodedCommand/i, label: 'powershell -EncodedCommand (obfuscated)', os: ['win32'] },
-  { pattern: /net\s+user\s+administrator\s+\*?\s*\/active:yes/i, label: 'net user administrator enable', os: ['win32'] },
-  { pattern: /takeown\s+\/f\s+[cC]:\\/i, label: 'takeown /f C:\\ (ownership grab)', os: ['win32'] },
-  { pattern: /icacls\s+[cC]:\\\s+\/grant/i, label: 'icacls C:\\ /grant (permission escalation)', os: ['win32'] },
+  { id: 'format-volume', pattern: /Format-Volume\s+.*-Confirm:\s*\$false/i, label: 'Format-Volume no confirm', os: ['win32'] },
+  { id: 'format-c-quick', pattern: /format\s+[cC]:\s*\/[qQy]/i, label: 'format C: /q or /y', os: ['win32'] },
+  { id: 'format-drive', pattern: /format\s+[a-zA-Z]:\s*\/[qQy]/i, label: 'format <drive> /q or /y', os: ['win32'] },
+  { id: 'del-wipe', pattern: /del\s+\/[fsqSFQ]+\s+[cC]:\\/i, label: 'del /f/s/q C:\\ (wipe)', os: ['win32'] },
+  { id: 'rd-all', pattern: /rd\s+\/[sq]+\s+[cC]:\\/i, label: 'rd /s/q C:\\ (remove all)', os: ['win32'] },
+  { id: 'remove-item-c', pattern: /Remove-Item\s+.*-Recurse\s+.*-Force.*[cC]:\\/i, label: 'Remove-Item -Recurse C:\\', os: ['win32'] },
+  { id: 'remove-item-root', pattern: /Remove-Item\s+.*-Recurse\s+.*-Force\s+\/\s/i, label: 'Remove-Item -Recurse /', os: ['win32'] },
+  { id: 'exec-policy', pattern: /Set-ExecutionPolicy\s+Unrestricted\s+-Force/i, label: 'ExecutionPolicy Unrestricted', os: ['win32'] },
+  { id: 'reg-system', pattern: /reg\s+(delete|add)\s+HKLM\\SYSTEM\\CurrentControlSet/i, label: 'reg modify HKLM\\SYSTEM', os: ['win32'] },
+  { id: 'bcdedit-del', pattern: /bcdedit\s+\/deletevalue/i, label: 'bcdedit /deletevalue', os: ['win32'] },
+  { id: 'bcdedit-safe', pattern: /bcdedit\s+\/set.*safeboot/i, label: 'bcdedit safeboot', os: ['win32'] },
+  { id: 'cipher-wipe', pattern: /cipher\s+\/w:[cC]:\\/i, label: 'cipher /w:C:\\ (wipe)', os: ['win32'] },
+  { id: 'sfc-offline', pattern: /sfc\s+\/scannow.*\/offwindir/i, label: 'sfc offline repair', os: ['win32'] },
+  { id: 'wmic-delete', pattern: /wmic\s+.*delete/i, label: 'wmic delete', os: ['win32'] },
+  { id: 'iex-download', pattern: /Invoke-Expression\s+\(.*Download.*\)/i, label: 'IEX download-and-exec', os: ['win32'] },
+  { id: 'iex-webclient', pattern: /iex\s+\(.*WebClient.*DownloadString/i, label: 'iex WebClient (remote exec)', os: ['win32'] },
+  { id: 'ps-encoded', pattern: /powershell\s+.*-EncodedCommand/i, label: 'powershell -EncodedCommand', os: ['win32'] },
+  { id: 'net-admin', pattern: /net\s+user\s+administrator\s+\*?\s*\/active:yes/i, label: 'net user admin enable', os: ['win32'] },
+  { id: 'takeown-c', pattern: /takeown\s+\/f\s+[cC]:\\/i, label: 'takeown /f C:\\', os: ['win32'] },
+  { id: 'icacls-c', pattern: /icacls\s+[cC]:\\\s+\/grant/i, label: 'icacls C:\\ /grant', os: ['win32'] },
 ];
 
+/** Get the set of removed pattern IDs from global state */
+function getRemovedPatternIds() {
+  const raw = _ctx.globalState.get('removedPatternIds', []);
+  return new Set(Array.isArray(raw) ? raw : []);
+}
+
+/** Save a set of removed pattern IDs to global state */
+function saveRemovedPatternIds(ids) {
+  _ctx.globalState.update('removedPatternIds', [...ids]);
+}
+
+/** Get active built-in patterns (not removed by user) */
+function getActiveBuiltinPatterns() {
+  const removed = getRemovedPatternIds();
+  return BUILTIN_DANGEROUS_PATTERNS.filter(p => !removed.has(p.id));
+}
+
 /**
- * Checks a command string against built-in + custom dangerous patterns.
+ * Checks a command string against active built-in + custom dangerous patterns.
  * @param {string} cmd
  * @returns {{ matched: boolean, label: string, pattern: string }}
  */
@@ -100,8 +119,8 @@ function checkDangerousCommand(cmd) {
   const platform = process.platform; // 'win32' | 'linux' | 'darwin'
   const trimmed = cmd.trim();
 
-  // Check built-in patterns (platform-filtered)
-  for (const entry of BUILTIN_DANGEROUS_PATTERNS) {
+  // Check active built-in patterns (platform-filtered, respecting user removals)
+  for (const entry of getActiveBuiltinPatterns()) {
     if (!entry.os.includes(platform)) continue;
     if (entry.pattern.test(trimmed)) {
       return { matched: true, label: entry.label, pattern: entry.pattern.toString() };
@@ -307,7 +326,6 @@ class AntigravityPanelProvider {
       } else if (msg.command === 'toggleEnabled') {
         autoPilotEnabled = !autoPilotEnabled;
         updateStatusBarFromCache();
-        // Persist into workspace config
         const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
         await cfg.update('enabledOnStartup', autoPilotEnabled, vscode.ConfigurationTarget.Global);
         if (panelProvider) panelProvider.sendEnabled(autoPilotEnabled);
@@ -316,12 +334,37 @@ class AntigravityPanelProvider {
         );
       } else if (msg.command === 'openSettings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityAutoAccept');
+      } else if (msg.command === 'toggleCommandBlocking') {
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        const current = cfg.get('dangerousCommandBlocking.enabled', true);
+        const next = !current;
+        await cfg.update('dangerousCommandBlocking.enabled', next, vscode.ConfigurationTarget.Global);
+        this.sendBlockingEnabled(next);
+        vscode.window.showInformationMessage(
+          next ? '🛡️ Command Blocking enabled' : '⚠️ Command Blocking disabled',
+        );
+      } else if (msg.command === 'removePattern') {
+        // Remove a built-in pattern by ID
+        const removed = getRemovedPatternIds();
+        removed.add(msg.id);
+        saveRemovedPatternIds(removed);
+        this.sendPatterns();
+        vscode.window.showInformationMessage(`Removed preset: ${msg.label}`);
+      } else if (msg.command === 'resetPatterns') {
+        // Reset all removed patterns
+        saveRemovedPatternIds(new Set());
+        this.sendPatterns();
+        vscode.window.showInformationMessage('🔄 All preset dangerous commands restored to defaults.');
       }
     });
 
     // Initial load
     refreshStatus();
     this.sendEnabled(autoPilotEnabled);
+    this.sendBlockingEnabled(
+      vscode.workspace.getConfiguration('antigravityAutoAccept').get('dangerousCommandBlocking.enabled', true),
+    );
+    this.sendPatterns();
   }
 
   /** @param {string} text */
@@ -344,6 +387,25 @@ class AntigravityPanelProvider {
   sendEnabled(enabled) {
     if (!this._view) return;
     this._view.webview.postMessage({ command: 'setEnabled', enabled });
+  }
+
+  /** @param {boolean} enabled */
+  sendBlockingEnabled(enabled) {
+    if (!this._view) return;
+    this._view.webview.postMessage({ command: 'setBlockingEnabled', enabled });
+  }
+
+  /** Send current pattern list to the webview */
+  sendPatterns() {
+    if (!this._view) return;
+    const removed = getRemovedPatternIds();
+    const patterns = BUILTIN_DANGEROUS_PATTERNS.map(p => ({
+      id: p.id,
+      label: p.label,
+      os: p.os,
+      active: !removed.has(p.id),
+    }));
+    this._view.webview.postMessage({ command: 'patterns', patterns, totalBuiltin: BUILTIN_DANGEROUS_PATTERNS.length });
   }
 
   _getHtml() {
@@ -431,20 +493,57 @@ class AntigravityPanelProvider {
     background:var(--vscode-editor-background);
     font-size:11px;font-weight:600;
     border-bottom:1px solid var(--vscode-panel-border);
+    cursor:pointer;
   }
+  .section-header:hover{opacity:.85}
   .section-header .badge{
     font-size:9px;padding:1px 6px;border-radius:10px;
-    background:#e06c75;color:#fff;font-weight:700;
+    background:#4ec94e;color:#fff;font-weight:700;
   }
-  .section-header .badge.on{background:#4ec94e}
-  .blocklist{padding:6px 10px}
-  .block-item{
-    display:flex;align-items:center;gap:5px;
-    font-size:10px;padding:2px 0;color:var(--vscode-descriptionForeground);
+  .section-header .badge.off{background:#e06c75}
+
+  .pattern-list{
+    max-height:220px;overflow-y:auto;padding:4px 0;
   }
-  .block-dot{
-    width:5px;height:5px;border-radius:50%;background:#e5c07b;flex-shrink:0;
+  .pattern-list::-webkit-scrollbar{width:4px}
+  .pattern-list::-webkit-scrollbar-thumb{background:#555;border-radius:2px}
+
+  .pattern-item{
+    display:flex;align-items:center;gap:6px;
+    font-size:10px;padding:3px 10px;
+    color:var(--vscode-foreground);
+    border-bottom:1px solid rgba(128,128,128,.1);
+    transition:background .15s;
   }
+  .pattern-item:hover{background:rgba(128,128,128,.1)}
+  .pattern-item.removed{opacity:.35;text-decoration:line-through}
+  .pattern-os{
+    font-size:8px;padding:1px 4px;border-radius:3px;
+    background:rgba(128,128,128,.2);color:var(--vscode-descriptionForeground);
+    flex-shrink:0;
+  }
+  .pattern-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pattern-del{
+    cursor:pointer;color:#e06c75;font-size:12px;flex-shrink:0;
+    opacity:0;transition:opacity .15s;line-height:1;
+    background:none;border:none;padding:0 2px;font-family:inherit;
+  }
+  .pattern-item:hover .pattern-del{opacity:1}
+  .pattern-del:hover{color:#ff4444}
+
+  .pattern-footer{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:5px 10px;font-size:9px;
+    color:var(--vscode-descriptionForeground);
+    border-top:1px solid var(--vscode-panel-border);
+    background:var(--vscode-editor-background);
+  }
+  .pattern-reset{
+    cursor:pointer;color:var(--vscode-textLink-foreground);
+    background:none;border:none;font-size:9px;padding:0;
+    font-family:inherit;
+  }
+  .pattern-reset:hover{text-decoration:underline}
 
   /* ── Path box ── */
   .path-box{
@@ -481,6 +580,10 @@ class AntigravityPanelProvider {
     color:var(--vscode-descriptionForeground);
     text-align:center;line-height:1.5;
   }
+  .collapsed .pattern-list{display:none}
+  .collapsed .pattern-footer{display:none}
+  .chevron{transition:transform .2s;display:inline-block}
+  .collapsed .chevron{transform:rotate(-90deg)}
 </style>
 </head>
 <body>
@@ -518,20 +621,30 @@ class AntigravityPanelProvider {
 
 <div class="path-box" id="pathBox" style="display:none"></div>
 
-<!-- Dangerous Command Blocking section -->
-<div class="section">
-  <div class="section-header">
-    🛡️ Command Blocking
-    <span class="badge on" id="blockBadge">ON</span>
+<!-- Command Blocking toggle -->
+<div class="toggle-row" id="blockingToggleRow">
+  <div>
+    <div class="toggle-label">🛡️ Command Blocking</div>
+    <div class="toggle-sub" id="blockingToggleSub">Active — blocking dangerous commands</div>
   </div>
-  <div class="blocklist">
-    <div class="block-item"><span class="block-dot"></span>rm -rf / and variants (Linux/macOS)</div>
-    <div class="block-item"><span class="block-dot"></span>dd / mkfs / wipefs on devices</div>
-    <div class="block-item"><span class="block-dot"></span>format C: / Remove-Item -Force (Windows)</div>
-    <div class="block-item"><span class="block-dot"></span>curl/wget pipe to shell</div>
-    <div class="block-item"><span class="block-dot"></span>Fork bombs, IEX download-exec</div>
-    <div class="block-item"><span class="block-dot"></span>diskutil erase, bcdedit delete</div>
-    <div class="block-item" style="color:var(--vscode-foreground);font-style:italic">+ 40 more built-in patterns</div>
+  <label class="switch" title="Toggle Command Blocking on/off">
+    <input type="checkbox" id="blockingToggleCheck" checked onchange="send('toggleCommandBlocking')">
+    <span class="slider"></span>
+  </label>
+</div>
+
+<!-- Dangerous Command Blocking section -->
+<div class="section" id="blockSection">
+  <div class="section-header" id="blockHeader">
+    <span><span class="chevron">▾</span> 🛡️ Dangerous Command Presets</span>
+    <span class="badge" id="blockBadge">0 active</span>
+  </div>
+  <div class="pattern-list" id="patternList">
+    <!-- populated dynamically -->
+  </div>
+  <div class="pattern-footer">
+    <span id="patternCount">0 / 0 active</span>
+    <button class="pattern-reset" id="resetBtn" title="Restore all removed presets">🔄 Reset Defaults</button>
   </div>
 </div>
 
@@ -545,12 +658,13 @@ class AntigravityPanelProvider {
 <script>
   const vscode = acquireVsCodeApi();
 
-  function send(cmd) {
-    if (cmd !== 'openSettings' && cmd !== 'toggleEnabled' && cmd !== 'refresh') {
+  function send(cmd, extra) {
+    if (cmd !== 'openSettings' && cmd !== 'toggleEnabled' && cmd !== 'toggleCommandBlocking'
+        && cmd !== 'refresh' && cmd !== 'removePattern' && cmd !== 'resetPatterns') {
       document.getElementById('btnApply').disabled = true;
       document.getElementById('btnRevert').disabled = true;
     }
-    vscode.postMessage({ command: cmd });
+    vscode.postMessage(Object.assign({ command: cmd }, extra || {}));
   }
 
   // Wire up buttons
@@ -561,59 +675,125 @@ class AntigravityPanelProvider {
     document.querySelector('.btn-refresh').disabled = true;
     setTimeout(() => { document.querySelector('.btn-refresh').disabled = false; }, 2000);
   });
+  document.getElementById('resetBtn').addEventListener('click', () => send('resetPatterns'));
+
+  // Collapse/expand
+  document.getElementById('blockHeader').addEventListener('click', () => {
+    document.getElementById('blockSection').classList.toggle('collapsed');
+  });
 
   send('refresh');
 
-  window.addEventListener('message', e => {
-    const { command, patched, basePath, files, text, enabled } = e.data;
+  /** Render the pattern list */
+  function renderPatterns(patterns, totalBuiltin) {
+    const list = document.getElementById('patternList');
+    list.textContent = '';
+    const activeCount = patterns.filter(p => p.active).length;
+    document.getElementById('blockBadge').textContent = activeCount + ' active';
+    document.getElementById('blockBadge').className = 'badge' + (activeCount === 0 ? ' off' : '');
+    document.getElementById('patternCount').textContent = activeCount + ' / ' + totalBuiltin + ' active';
 
-    if (command === 'setEnabled') {
+    const osLabel = { linux: 'LNX', darwin: 'MAC', win32: 'WIN' };
+
+    for (const p of patterns) {
+      const row = document.createElement('div');
+      row.className = 'pattern-item' + (p.active ? '' : ' removed');
+
+      // OS badges
+      const osSpan = document.createElement('span');
+      osSpan.className = 'pattern-os';
+      osSpan.textContent = p.os.map(o => osLabel[o] || o).join('/');
+      row.appendChild(osSpan);
+
+      // Label
+      const lbl = document.createElement('span');
+      lbl.className = 'pattern-label';
+      lbl.textContent = p.label;
+      lbl.title = p.label;
+      row.appendChild(lbl);
+
+      // Delete button (only for active items)
+      if (p.active) {
+        const del = document.createElement('button');
+        del.className = 'pattern-del';
+        del.textContent = '✕';
+        del.title = 'Remove this preset';
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          send('removePattern', { id: p.id, label: p.label });
+        });
+        row.appendChild(del);
+      }
+
+      list.appendChild(row);
+    }
+  }
+
+  window.addEventListener('message', e => {
+    const data = e.data;
+
+    if (data.command === 'setEnabled') {
       const chk = document.getElementById('toggleCheck');
-      chk.checked = enabled;
-      document.getElementById('toggleSub').textContent = enabled
+      chk.checked = data.enabled;
+      document.getElementById('toggleSub').textContent = data.enabled
         ? 'Active — executing all commands'
         : 'Suspended — commands require confirmation';
     }
 
-    if (command === 'loading') {
+    if (data.command === 'setBlockingEnabled') {
+      const chk = document.getElementById('blockingToggleCheck');
+      chk.checked = data.enabled;
+      document.getElementById('blockingToggleSub').textContent = data.enabled
+        ? 'Active — blocking dangerous commands'
+        : 'Disabled — commands not blocked';
+      // Dim the presets section when blocking is off
+      const section = document.getElementById('blockSection');
+      if (section) section.style.opacity = data.enabled ? '1' : '0.4';
+    }
+
+    if (data.command === 'patterns') {
+      renderPatterns(data.patterns, data.totalBuiltin);
+    }
+
+    if (data.command === 'loading') {
       document.getElementById('lbl').className = 'status-label loading';
-      document.getElementById('lbl').textContent = text || '⏳ Working...';
+      document.getElementById('lbl').textContent = data.text || '⏳ Working...';
       document.getElementById('desc').textContent = 'Please wait...';
       return;
     }
 
-    if (command !== 'update') return;
+    if (data.command !== 'update') return;
 
     // Re-enable buttons
     document.getElementById('btnApply').disabled = false;
     document.getElementById('btnRevert').disabled = false;
 
-    const notFound = !basePath;
+    const notFound = !data.basePath;
 
-    document.getElementById('card').className = 'status-card' + (notFound ? ' not-found' : patched ? ' patched' : '');
-    document.getElementById('dot').className  = 'dot' + (notFound ? ' not-found' : patched ? ' patched' : '');
-    document.getElementById('dot').textContent = notFound ? '✕' : patched ? '✓' : '○';
+    document.getElementById('card').className = 'status-card' + (notFound ? ' not-found' : data.patched ? ' patched' : '');
+    document.getElementById('dot').className  = 'dot' + (notFound ? ' not-found' : data.patched ? ' patched' : '');
+    document.getElementById('dot').textContent = notFound ? '✕' : data.patched ? '✓' : '○';
 
     const lbl = document.getElementById('lbl');
-    lbl.className = 'status-label ' + (notFound ? 'not-found' : patched ? 'patched' : 'pending');
-    lbl.textContent = notFound ? 'Not Found' : patched ? 'Patched' : 'Not Patched';
+    lbl.className = 'status-label ' + (notFound ? 'not-found' : data.patched ? 'patched' : 'pending');
+    lbl.textContent = notFound ? 'Not Found' : data.patched ? 'Patched' : 'Not Patched';
 
     document.getElementById('desc').textContent = notFound
       ? 'Antigravity installation not detected'
-      : patched ? 'AutoPilot is active on this machine' : 'Click APPLY PATCH to activate';
+      : data.patched ? 'AutoPilot is active on this machine' : 'Click APPLY PATCH to activate';
 
-    if (basePath) {
+    if (data.basePath) {
       const pb = document.getElementById('pathBox');
-      pb.textContent = basePath;
+      pb.textContent = data.basePath;
       pb.style.display = 'block';
     }
 
-    document.getElementById('btnApply').style.display = notFound || patched ? 'none' : 'block';
-    document.getElementById('btnRevert').style.display = patched ? 'block' : 'none';
+    document.getElementById('btnApply').style.display = notFound || data.patched ? 'none' : 'block';
+    document.getElementById('btnRevert').style.display = data.patched ? 'block' : 'none';
 
     document.getElementById('noteBox').textContent = notFound
       ? 'Install Antigravity first, then click Refresh.'
-      : patched ? 'Restart Antigravity to apply changes.' : '';
+      : data.patched ? 'Restart Antigravity to apply changes.' : '';
   });
 </script>
 </body>
@@ -630,6 +810,8 @@ function updateStatusBar() { updateStatusBarFromCache(); }
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
+  _ctx = context;
+
   // Shared output channel
   outputChannel = vscode.window.createOutputChannel('AutoPilot');
   context.subscriptions.push(outputChannel);
@@ -657,9 +839,6 @@ function activate(context) {
   );
 
   // ── Terminal command watcher (Dangerous Command Blocking) ──────────────────
-  // VS Code API: onDidWriteTerminalData captures output; we intercept typed
-  // commands via onDidStartTerminalShellExecution (VS Code 1.87+).
-  // Fallback: detect via terminal write events.
   if (typeof vscode.window.onDidStartTerminalShellExecution === 'function') {
     context.subscriptions.push(
       vscode.window.onDidStartTerminalShellExecution((event) => {
@@ -668,14 +847,12 @@ function activate(context) {
         const check = checkDangerousCommand(cmd);
         if (check.matched) {
           handleDangerousCommand(cmd, check.label);
-          // Note: VS Code does not expose a cancellation API for shell exec;
-          // we log/warn/notify. For full blocking, pair with shell hook.
         }
       }),
     );
   }
 
-  // Config change listener — react to user toggling blocking or action
+  // Config change listener
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('antigravityAutoAccept.enabledOnStartup')) {

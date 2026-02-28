@@ -1,9 +1,14 @@
 # Antigravity AutoPilot
 
+<p align="center">
+  <img src="icon.png" width="128" alt="Antigravity AutoPilot Logo">
+</p>
+
 > Automatically execute all tool calls and terminal commands in Antigravity — no manual confirmation needed.
 
 [![npm](https://img.shields.io/npm/v/antigravity-autopilot)](https://www.npmjs.com/package/antigravity-autopilot)
 [![GitHub](https://img.shields.io/badge/GitHub-Antigravity--AutoPilot-blue)](https://github.com/nguyenhx2/Antigravity-AutoPilot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
@@ -17,6 +22,9 @@ Antigravity has an **"Always Proceed"** terminal execution policy, but due to a 
 - ✅ Non-destructive — creates `.bak` backup before patching
 - ✅ Reversible — restore originals anytime with `--revert`
 - ✅ Available as VS Code Extension **and** CLI (`npx`)
+- 🛡️ 54+ built-in dangerous command presets (Linux/macOS/Windows)
+- 🔘 On/Off toggle for Command Blocking directly from sidebar
+- ⚙️ Fully customizable preset management with Reset Defaults
 
 ---
 
@@ -49,7 +57,7 @@ Install the extension directly into Antigravity for a UI-based experience (sideb
 
 ```bash
 # Download .vsix from GitHub Releases, then:
-antigravity --install-extension antigravity-autopilot-1.0.0.vsix
+antigravity --install-extension antigravity-autopilot-1.4.0.vsix
 ```
 
 **Extension features:**
@@ -57,6 +65,49 @@ antigravity --install-extension antigravity-autopilot-1.0.0.vsix
 - 📊 Status bar showing current patch state
 - ⌨️ Keyboard shortcut: `Ctrl+Shift+F12`
 - ⚙️ `applyOnStartup` setting for fully automatic operation
+- 🔘 `enabledOnStartup` — toggle AutoPilot active/suspended on launch
+- 🛡️ **Command Blocking On/Off** — toggle dangerous command blocking directly from the sidebar UI
+- 📋 **Preset Management** — view, remove, and reset 54+ built-in dangerous command presets
+
+---
+
+## 🛡️ Dangerous Command Blocking
+
+Built-in protection against destructive commands. **54+ preset patterns** covering all major platforms:
+
+| Platform | Examples |
+|----------|----------|
+| **Linux/macOS** | `rm -rf /`, `dd of=/dev/sda`, `mkfs`, fork bombs, `curl \| sh`, `chmod 777 -R /` |
+| **macOS** | `diskutil eraseDisk`, `csrutil disable` |
+| **Windows** | `format C:`, `Remove-Item -Recurse C:\`, `bcdedit /deletevalue`, `IEX download-and-exec` |
+
+### Sidebar Controls
+
+- 🔘 **On/Off Toggle** — enable or disable command blocking with a single switch
+- 📋 **View all presets** — full list of blocked commands with OS badges (LNX/MAC/WIN)
+- ✕ **Remove individual presets** — click the ✕ button to exclude a preset
+- 🔄 **Reset Defaults** — restore all removed presets with one click
+- 📊 **Active count** — always see how many presets are active
+- 🔅 **Visual feedback** — presets section dims when blocking is disabled
+
+### Custom Patterns
+
+Add your own patterns via Settings:
+
+```json
+"antigravityAutoAccept.dangerousCommandBlocking.customPatterns": [
+  "^my-dangerous-script",
+  "DROP TABLE"
+]
+```
+
+### Action Modes
+
+| Mode | Behavior |
+|------|----------|
+| `block` | Block command + show error notification (default) |
+| `warn` | Show warning but allow command to proceed |
+| `log` | Silently log to Output channel |
 
 ---
 
@@ -88,4 +139,4 @@ Variable names are resolved via regex at runtime, making the patch resilient to 
 
 ## License
 
-MIT
+[MIT](LICENSE) — Copyright (c) 2026 Nguyen Hoang (nguyenhx2 or Brian)

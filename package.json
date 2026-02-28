@@ -2,7 +2,8 @@
   "name": "antigravity-autopilot",
   "displayName": "Antigravity AutoPilot",
   "description": "Enables autopilot mode for Antigravity: automatically executes all tool calls and terminal commands without manual confirmation. Patches the runtime JS bundle to inject auto-accept logic whenever the 'Always Proceed' policy is active — regex-based and version-agnostic.",
-  "version": "1.2.0",
+  "version": "1.4.1",
+  "license": "MIT",
   "publisher": "nguyen-hoang",
   "bin": {
     "antigravity-autopilot": "./cli.js"
@@ -14,8 +15,12 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "icon": "icon.png",
   "contributes": {
@@ -84,7 +89,11 @@
         },
         "antigravityAutoAccept.dangerousCommandBlocking.action": {
           "type": "string",
-          "enum": ["block", "warn", "log"],
+          "enum": [
+            "block",
+            "warn",
+            "log"
+          ],
           "enumDescriptions": [
             "Block the command entirely and show an error notification.",
             "Show a warning notification but still allow the command to proceed.",
@@ -95,7 +104,9 @@
         },
         "antigravityAutoAccept.dangerousCommandBlocking.customPatterns": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Additional regex patterns (JavaScript syntax) to treat as dangerous commands. Example: [\"^dd if=.*of=/dev/sd\", \"^shred\"]"
         }
