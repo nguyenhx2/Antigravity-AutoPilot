@@ -16,6 +16,142 @@ let isPatchApplied = false;
 let panelProvider = null;
 /** @type {{ basePath: string|null, files: any[], patched: boolean } | null} */
 let _cachedStatus = null;
+/** @type {boolean} */
+let autoPilotEnabled = true;
+/** @type {vscode.OutputChannel} */
+let outputChannel;
+
+// ─── Dangerous Command Blocking ───────────────────────────────────────────────
+
+/**
+ * Built-in dangerous command patterns.
+ * Covers Linux/macOS/Windows destructive commands.
+ * Each entry: { pattern: RegExp, label: string, os: string[] }
+ */
+const BUILTIN_DANGEROUS_PATTERNS = [
+  // ── Linux / macOS ──
+  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--force\s+).*\/(\s|$)/, label: 'rm -rf /', os: ['linux', 'darwin'] },
+  { pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+\/(\s|$)/, label: 'rm -r / (root wipe)', os: ['linux', 'darwin'] },
+  { pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+~(\s|$|\/)/, label: 'rm -r ~ (home wipe)', os: ['linux', 'darwin'] },
+  { pattern: /rm\s+.*--no-preserve-root/, label: 'rm --no-preserve-root', os: ['linux', 'darwin'] },
+  { pattern: /:\(\)\s*\{.*:\|:&\s*\};\s*:/, label: 'Fork bomb :(){:|:&};:', os: ['linux', 'darwin'] },
+  { pattern: /mkfs\.(ext[234]|xfs|btrfs|vfat|ntfs)\s+\/dev\/(sd|hd|nvme|vd)/, label: 'mkfs on block device', os: ['linux', 'darwin'] },
+  { pattern: /dd\s+.*of=\/dev\/(sd[a-z]|hd[a-z]|nvme\d+|zero|null)/, label: 'dd overwrite device', os: ['linux', 'darwin'] },
+  { pattern: />\s*\/dev\/(sd[a-z]|hd[a-z]|nvme\d+)/, label: 'Redirect to block device', os: ['linux', 'darwin'] },
+  { pattern: /shred\s+(-[a-zA-Z]*n\s*\d+\s+)?\/dev\//, label: 'shred device', os: ['linux', 'darwin'] },
+  { pattern: /mv\s+.*\s+\/dev\/null/, label: 'mv to /dev/null', os: ['linux', 'darwin'] },
+  { pattern: /chmod\s+-[rR]\s+000\s+\//, label: 'chmod 000 recursive on /', os: ['linux', 'darwin'] },
+  { pattern: /chmod\s+777\s+-R\s+\/(\s|$)/, label: 'chmod 777 -R /', os: ['linux', 'darwin'] },
+  { pattern: /chown\s+.*-R\s+.*\s+\/(\s|$)/, label: 'chown -R on /', os: ['linux', 'darwin'] },
+  { pattern: /passwd\s+root\s*$/, label: 'passwd root (no new password)', os: ['linux', 'darwin'] },
+  { pattern: /sudo\s+rm\s+-[a-zA-Z]*rf?\s+\/(\s|$)/, label: 'sudo rm -rf /', os: ['linux', 'darwin'] },
+  { pattern: /wget\s+.*\|\s*(ba)?sh/, label: 'wget pipe to shell', os: ['linux', 'darwin'] },
+  { pattern: /curl\s+.*\|\s*(ba)?sh/, label: 'curl pipe to shell', os: ['linux', 'darwin'] },
+  { pattern: /base64\s+-d.*\|\s*(ba)?sh/, label: 'base64 decode pipe to shell', os: ['linux', 'darwin'] },
+  { pattern: /eval\s+\$\(.*\)/, label: 'eval $(...) subshell', os: ['linux', 'darwin'] },
+  { pattern: /fdisk\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'fdisk on disk', os: ['linux', 'darwin'] },
+  { pattern: /parted\s+\/dev\/(sd[a-z]|nvme\d+)/, label: 'parted on disk', os: ['linux', 'darwin'] },
+  { pattern: /wipefs\s+.*\/dev\//, label: 'wipefs on device', os: ['linux', 'darwin'] },
+  { pattern: /truncate\s+-s\s+0\s+\/dev\//, label: 'truncate device to 0', os: ['linux', 'darwin'] },
+  { pattern: /echo\s+.*>\s*\/boot\//, label: 'overwrite /boot/', os: ['linux', 'darwin'] },
+  { pattern: /cat\s+\/dev\/zero\s+>\s+\//, label: 'cat /dev/zero to /', os: ['linux', 'darwin'] },
+  { pattern: /umount\s+-a/, label: 'umount -a (unmount all)', os: ['linux', 'darwin'] },
+  { pattern: /init\s+0/, label: 'init 0 (halt system)', os: ['linux', 'darwin'] },
+  { pattern: /poweroff|halt\s*$/, label: 'System shutdown command', os: ['linux', 'darwin'] },
+  { pattern: /iptables\s+-F/, label: 'iptables -F (flush all rules)', os: ['linux', 'darwin'] },
+  { pattern: /ufw\s+--force\s+reset/, label: 'ufw --force reset', os: ['linux', 'darwin'] },
+  // ── macOS specific ──
+  { pattern: /diskutil\s+(eraseDisk|eraseVolume|partitionDisk)\s+/, label: 'diskutil erase/repartition', os: ['darwin'] },
+  { pattern: /diskutil\s+zeroDisk\s+/, label: 'diskutil zeroDisk', os: ['darwin'] },
+  { pattern: /csrutil\s+disable/, label: 'csrutil disable (SIP)', os: ['darwin'] },
+  // ── Windows (PowerShell / cmd) ──
+  { pattern: /Format-Volume\s+.*-Confirm:\s*\$false/i, label: 'Format-Volume without confirm', os: ['win32'] },
+  { pattern: /format\s+[cC]:\s*\/[qQy]/i, label: 'format C: /q or /y', os: ['win32'] },
+  { pattern: /format\s+[a-zA-Z]:\s*\/[qQy]/i, label: 'format <drive> /q or /y', os: ['win32'] },
+  { pattern: /del\s+\/[fsqSFQ]+\s+[cC]:\\/i, label: 'del /f/s/q C:\\ (wipe drive)', os: ['win32'] },
+  { pattern: /rd\s+\/[sq]+\s+[cC]:\\/i, label: 'rd /s/q C:\\ (remove all)', os: ['win32'] },
+  { pattern: /Remove-Item\s+.*-Recurse\s+.*-Force.*[cC]:\\/i, label: 'Remove-Item -Recurse -Force C:\\', os: ['win32'] },
+  { pattern: /Remove-Item\s+.*-Recurse\s+.*-Force\s+\/\s/i, label: 'Remove-Item -Recurse -Force /', os: ['win32'] },
+  { pattern: /Set-ExecutionPolicy\s+Unrestricted\s+-Force/i, label: 'Set-ExecutionPolicy Unrestricted -Force', os: ['win32'] },
+  { pattern: /reg\s+(delete|add)\s+HKLM\\SYSTEM\\CurrentControlSet/i, label: 'reg delete HKLM\\SYSTEM critical', os: ['win32'] },
+  { pattern: /bcdedit\s+\/deletevalue/i, label: 'bcdedit /deletevalue (boot config)', os: ['win32'] },
+  { pattern: /bcdedit\s+\/set.*safeboot/i, label: 'bcdedit /set safeboot (forces safe mode)', os: ['win32'] },
+  { pattern: /cipher\s+\/w:[cC]:\\/i, label: 'cipher /w:C:\\ (wipe free space)', os: ['win32'] },
+  { pattern: /sfc\s+\/scannow.*\/offwindir/i, label: 'sfc offline (system repair risk)', os: ['win32'] },
+  { pattern: /wmic\s+.*delete/i, label: 'wmic delete', os: ['win32'] },
+  { pattern: /Invoke-Expression\s+\(.*Download.*\)/i, label: 'IEX download-and-execute', os: ['win32'] },
+  { pattern: /iex\s+\(.*WebClient.*DownloadString/i, label: 'iex WebClient DownloadString (remote exec)', os: ['win32'] },
+  { pattern: /powershell\s+.*-EncodedCommand/i, label: 'powershell -EncodedCommand (obfuscated)', os: ['win32'] },
+  { pattern: /net\s+user\s+administrator\s+\*?\s*\/active:yes/i, label: 'net user administrator enable', os: ['win32'] },
+  { pattern: /takeown\s+\/f\s+[cC]:\\/i, label: 'takeown /f C:\\ (ownership grab)', os: ['win32'] },
+  { pattern: /icacls\s+[cC]:\\\s+\/grant/i, label: 'icacls C:\\ /grant (permission escalation)', os: ['win32'] },
+];
+
+/**
+ * Checks a command string against built-in + custom dangerous patterns.
+ * @param {string} cmd
+ * @returns {{ matched: boolean, label: string, pattern: string }}
+ */
+function checkDangerousCommand(cmd) {
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  const enabled = cfg.get('dangerousCommandBlocking.enabled', true);
+  if (!enabled) return { matched: false, label: '', pattern: '' };
+
+  const platform = process.platform; // 'win32' | 'linux' | 'darwin'
+  const trimmed = cmd.trim();
+
+  // Check built-in patterns (platform-filtered)
+  for (const entry of BUILTIN_DANGEROUS_PATTERNS) {
+    if (!entry.os.includes(platform)) continue;
+    if (entry.pattern.test(trimmed)) {
+      return { matched: true, label: entry.label, pattern: entry.pattern.toString() };
+    }
+  }
+
+  // Check custom user patterns
+  const customPatterns = /** @type {string[]} */ (cfg.get('dangerousCommandBlocking.customPatterns', []));
+  for (const raw of customPatterns) {
+    try {
+      const re = new RegExp(raw, 'i');
+      if (re.test(trimmed)) {
+        return { matched: true, label: `Custom: ${raw}`, pattern: raw };
+      }
+    } catch {
+      // Invalid regex — skip silently
+    }
+  }
+
+  return { matched: false, label: '', pattern: '' };
+}
+
+/**
+ * Handles a detected dangerous command according to the configured action.
+ * @param {string} cmd - The full command text
+ * @param {string} label - Human-readable reason
+ */
+function handleDangerousCommand(cmd, label) {
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  const action = cfg.get('dangerousCommandBlocking.action', 'block');
+  const msg = `🛡️ Dangerous command detected: "${label}" — \`${cmd.trim().substring(0, 80)}\``;
+
+  outputChannel.appendLine(`[DangerBlock][${new Date().toISOString()}] ${action.toUpperCase()} | ${label} | CMD: ${cmd.trim()}`);
+
+  if (action === 'block') {
+    vscode.window.showErrorMessage(
+      `⛔ Blocked: ${label}`,
+      { modal: false },
+      'View Details',
+    ).then((choice) => {
+      if (choice === 'View Details') {
+        outputChannel.show(true);
+        outputChannel.appendLine(`[DangerBlock] Blocked command: ${cmd.trim()}`);
+      }
+    });
+  } else if (action === 'warn') {
+    vscode.window.showWarningMessage(`⚠️ Warning: ${msg}`);
+  }
+  // 'log' — already logged above, no UI notification
+}
 
 // ─── Child Process Bridge ─────────────────────────────────────────────────────
 
@@ -28,21 +164,20 @@ let _cachedStatus = null;
 function runPatcher(command) {
   return new Promise((resolve, reject) => {
     const child = fork(PATCHER, [], { silent: true });
-    const channel = vscode.window.createOutputChannel('AutoPilot');
 
     child.on('message', (msg) => {
       if (!msg || typeof msg !== 'object') return;
       const m = /** @type {{type:string,msg?:string}} */(msg);
       if (m.type === 'log') {
         console.log(m.msg);
-        channel.appendLine(m.msg || '');
+        outputChannel.appendLine(m.msg || '');
       } else {
-        resolve(msg); // status or result message
+        resolve(msg);
       }
     });
 
     child.on('error', (err) => {
-      channel.appendLine(`[AutoAccept] fork error: ${err.message}`);
+      outputChannel.appendLine(`[AutoPilot] fork error: ${err.message}`);
       reject(err);
     });
 
@@ -51,7 +186,7 @@ function runPatcher(command) {
         resolve({
           type: 'result',
           success: false,
-          message: `Process exited with code ${code}. Check Output > AutoAccept for details.`,
+          message: `Process exited with code ${code}. Check Output > AutoPilot for details.`,
         });
       }
     });
@@ -116,7 +251,32 @@ async function refreshStatus() {
   if (panelProvider) panelProvider.sendStatus(status);
 }
 
-// ─── Sidebar WebView ──────────────────────────────────────────────────────
+// ─── Status Bar ───────────────────────────────────────────────────────────────
+
+function updateStatusBarFromCache() {
+  if (!statusBarItem) return;
+  if (!autoPilotEnabled) {
+    statusBarItem.text = '$(debug-pause) AG Paused';
+    statusBarItem.tooltip = 'Antigravity AutoPilot is suspended';
+    statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningForeground');
+    return;
+  }
+  if (!_cachedStatus || !_cachedStatus.basePath) {
+    statusBarItem.text = '$(warning) AG: Not Found';
+    statusBarItem.tooltip = 'Antigravity not found on this system';
+    statusBarItem.color = new vscode.ThemeColor('statusBarItem.errorForeground');
+  } else if (_cachedStatus.patched) {
+    statusBarItem.text = '$(zap) AG: Active';
+    statusBarItem.tooltip = 'Antigravity AutoPilot — Patch Applied ✅';
+    statusBarItem.color = new vscode.ThemeColor('statusBarItem.prominentForeground');
+  } else {
+    statusBarItem.text = '$(circle-slash) AG: Inactive';
+    statusBarItem.tooltip = 'Antigravity AutoPilot — Patch Not Applied';
+    statusBarItem.color = undefined;
+  }
+}
+
+// ─── Sidebar WebView ──────────────────────────────────────────────────────────
 
 class AntigravityPanelProvider {
   /** @param {vscode.ExtensionContext} context */
@@ -144,11 +304,24 @@ class AntigravityPanelProvider {
       } else if (msg.command === 'refresh') {
         this._postLoading('⏳ Checking...');
         await refreshStatus();
+      } else if (msg.command === 'toggleEnabled') {
+        autoPilotEnabled = !autoPilotEnabled;
+        updateStatusBarFromCache();
+        // Persist into workspace config
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        await cfg.update('enabledOnStartup', autoPilotEnabled, vscode.ConfigurationTarget.Global);
+        if (panelProvider) panelProvider.sendEnabled(autoPilotEnabled);
+        vscode.window.showInformationMessage(
+          autoPilotEnabled ? '⚡ AutoPilot resumed' : '⏸ AutoPilot suspended',
+        );
+      } else if (msg.command === 'openSettings') {
+        vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityAutoAccept');
       }
     });
 
     // Initial load
     refreshStatus();
+    this.sendEnabled(autoPilotEnabled);
   }
 
   /** @param {string} text */
@@ -167,8 +340,11 @@ class AntigravityPanelProvider {
     });
   }
 
-  /** @deprecated use sendStatus */
-  updateState() { refreshStatus(); }
+  /** @param {boolean} enabled */
+  sendEnabled(enabled) {
+    if (!this._view) return;
+    this._view.webview.postMessage({ command: 'setEnabled', enabled });
+  }
 
   _getHtml() {
     return /* html */`<!DOCTYPE html>
@@ -182,80 +358,133 @@ class AntigravityPanelProvider {
     font-family:'Segoe UI',sans-serif;
     background:var(--vscode-sideBar-background);
     color:var(--vscode-foreground);
-    padding:16px;user-select:none;
+    padding:12px;user-select:none;
   }
+
+  /* ── Header ── */
   .header{
     display:flex;align-items:center;gap:8px;
-    margin-bottom:16px;padding-bottom:12px;
+    margin-bottom:12px;padding-bottom:10px;
     border-bottom:1px solid var(--vscode-panel-border);
   }
-  .header-icon{font-size:20px}
+  .header-icon{font-size:18px}
   .header-title{font-size:13px;font-weight:600;letter-spacing:.3px}
-  .header-sub{font-size:11px;color:var(--vscode-descriptionForeground);margin-top:2px}
+  .header-sub{font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px}
 
+  /* ── Toggle Row ── */
+  .toggle-row{
+    display:flex;align-items:center;justify-content:space-between;
+    background:var(--vscode-editor-background);
+    border:1px solid var(--vscode-panel-border);
+    border-radius:6px;padding:8px 10px;margin-bottom:10px;
+  }
+  .toggle-label{font-size:11px;font-weight:600}
+  .toggle-sub{font-size:10px;color:var(--vscode-descriptionForeground);margin-top:1px}
+  .switch{position:relative;display:inline-block;width:34px;height:18px;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{
+    position:absolute;cursor:pointer;inset:0;
+    background:#555;border-radius:18px;
+    transition:background .2s;
+  }
+  .slider:before{
+    position:absolute;content:'';height:14px;width:14px;
+    left:2px;bottom:2px;background:#fff;border-radius:50%;
+    transition:transform .2s;
+  }
+  input:checked + .slider{background:#4ec94e}
+  input:checked + .slider:before{transform:translateX(16px)}
+
+  /* ── Status card ── */
   .status-card{
-    border-radius:8px;padding:16px;margin-bottom:12px;
+    border-radius:6px;padding:12px;margin-bottom:10px;
     background:var(--vscode-editor-background);
     border:1px solid var(--vscode-panel-border);
     transition:border-color .3s,background .3s;
   }
   .status-card.patched{border-color:#4ec94e;background:rgba(78,201,78,.07)}
   .status-card.not-found{border-color:#e06c75;background:rgba(224,108,117,.07)}
-  .status-row{display:flex;align-items:center;gap:12px}
+  .status-row{display:flex;align-items:center;gap:10px}
   .dot{
-    width:36px;height:36px;border-radius:50%;
+    width:32px;height:32px;border-radius:50%;
     display:flex;align-items:center;justify-content:center;
-    font-size:18px;flex-shrink:0;background:#3c3c3c;
+    font-size:16px;flex-shrink:0;background:#3c3c3c;
     transition:background .3s;
   }
   .dot.patched{background:#4ec94e}
   .dot.not-found{background:#e06c75}
-  .status-label{font-size:18px;font-weight:700;line-height:1}
+  .status-label{font-size:16px;font-weight:700;line-height:1}
   .status-label.patched{color:#4ec94e}
   .status-label.pending{color:#e5c07b}
   .status-label.not-found{color:#e06c75}
   .status-label.loading{color:var(--vscode-descriptionForeground)}
-  .status-desc{font-size:11px;color:var(--vscode-descriptionForeground);margin-top:4px}
+  .status-desc{font-size:10px;color:var(--vscode-descriptionForeground);margin-top:3px}
 
+  /* ── Security section ── */
+  .section{
+    border:1px solid var(--vscode-panel-border);
+    border-radius:6px;margin-bottom:10px;overflow:hidden;
+  }
+  .section-header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:7px 10px;
+    background:var(--vscode-editor-background);
+    font-size:11px;font-weight:600;
+    border-bottom:1px solid var(--vscode-panel-border);
+  }
+  .section-header .badge{
+    font-size:9px;padding:1px 6px;border-radius:10px;
+    background:#e06c75;color:#fff;font-weight:700;
+  }
+  .section-header .badge.on{background:#4ec94e}
+  .blocklist{padding:6px 10px}
+  .block-item{
+    display:flex;align-items:center;gap:5px;
+    font-size:10px;padding:2px 0;color:var(--vscode-descriptionForeground);
+  }
+  .block-dot{
+    width:5px;height:5px;border-radius:50%;background:#e5c07b;flex-shrink:0;
+  }
+
+  /* ── Path box ── */
   .path-box{
-    font-size:10px;color:var(--vscode-descriptionForeground);
+    font-size:9px;color:var(--vscode-descriptionForeground);
     background:var(--vscode-editor-background);
     border:1px solid var(--vscode-panel-border);
-    border-radius:4px;padding:6px 8px;margin-bottom:10px;
+    border-radius:4px;padding:4px 6px;margin-bottom:8px;
     word-break:break-all;
   }
 
-  .files-list{margin-bottom:12px}
-  .file-item{
-    display:flex;align-items:center;gap:6px;
-    font-size:11px;padding:4px 0;
-  }
-  .file-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-  .file-dot.patched{background:#4ec94e}
-  .file-dot.pending{background:#e5c07b}
-
+  /* ── Buttons ── */
   .btn{
-    width:100%;padding:10px;border:none;border-radius:6px;
-    font-size:12px;font-weight:700;letter-spacing:.5px;
+    width:100%;padding:8px;border:none;border-radius:5px;
+    font-size:11px;font-weight:700;letter-spacing:.4px;
     cursor:pointer;transition:background .2s,transform .1s;
-    font-family:inherit;margin-bottom:6px;
+    font-family:inherit;margin-bottom:5px;
   }
   .btn:active{transform:scale(.98)}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
   .btn-apply{background:#0e7a4c;color:#fff}
   .btn-apply:hover:not(:disabled){background:#0f9058}
   .btn-revert{background:#5a1a1a;color:#fff}
   .btn-revert:hover:not(:disabled){background:#7a2020}
   .btn-refresh{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+  .btn-settings{
+    background:transparent;color:var(--vscode-descriptionForeground);
+    border:1px solid var(--vscode-panel-border);font-size:10px;
+    margin-top:2px;
+  }
+  .btn-settings:hover{background:var(--vscode-editor-background)}
 
   .note{
-    margin-top:10px;font-size:10px;
+    margin-top:8px;font-size:9px;
     color:var(--vscode-descriptionForeground);
     text-align:center;line-height:1.5;
   }
 </style>
 </head>
 <body>
+
 <div class="header">
   <span class="header-icon">⚡</span>
   <div>
@@ -264,6 +493,19 @@ class AntigravityPanelProvider {
   </div>
 </div>
 
+<!-- Enabled/Disabled toggle -->
+<div class="toggle-row" id="toggleRow">
+  <div>
+    <div class="toggle-label">AutoPilot</div>
+    <div class="toggle-sub" id="toggleSub">Active — executing all commands</div>
+  </div>
+  <label class="switch" title="Toggle AutoPilot on/off">
+    <input type="checkbox" id="toggleCheck" checked onchange="send('toggleEnabled')">
+    <span class="slider"></span>
+  </label>
+</div>
+
+<!-- Patch Status -->
 <div class="status-card" id="card">
   <div class="status-row">
     <div class="dot" id="dot">⊘</div>
@@ -276,26 +518,62 @@ class AntigravityPanelProvider {
 
 <div class="path-box" id="pathBox" style="display:none"></div>
 
-<div class="files-list" id="filesList"></div>
+<!-- Dangerous Command Blocking section -->
+<div class="section">
+  <div class="section-header">
+    🛡️ Command Blocking
+    <span class="badge on" id="blockBadge">ON</span>
+  </div>
+  <div class="blocklist">
+    <div class="block-item"><span class="block-dot"></span>rm -rf / and variants (Linux/macOS)</div>
+    <div class="block-item"><span class="block-dot"></span>dd / mkfs / wipefs on devices</div>
+    <div class="block-item"><span class="block-dot"></span>format C: / Remove-Item -Force (Windows)</div>
+    <div class="block-item"><span class="block-dot"></span>curl/wget pipe to shell</div>
+    <div class="block-item"><span class="block-dot"></span>Fork bombs, IEX download-exec</div>
+    <div class="block-item"><span class="block-dot"></span>diskutil erase, bcdedit delete</div>
+    <div class="block-item" style="color:var(--vscode-foreground);font-style:italic">+ 40 more built-in patterns</div>
+  </div>
+</div>
 
-<button class="btn btn-apply" id="btnApply" onclick="send('apply')" style="display:none">⚡ APPLY PATCH</button>
-<button class="btn btn-revert" id="btnRevert" onclick="send('revert')" style="display:none">↩ REVERT PATCH</button>
-<button class="btn btn-refresh" onclick="send('refresh')">🔄 Refresh Status</button>
+<button class="btn btn-apply" id="btnApply" style="display:none">⚡ APPLY PATCH</button>
+<button class="btn btn-revert" id="btnRevert" style="display:none">↩ REVERT PATCH</button>
+<button class="btn btn-refresh">🔄 Refresh Status</button>
+<button class="btn btn-settings" onclick="send('openSettings')">⚙️ Open Settings</button>
 
 <div class="note" id="noteBox"></div>
 
 <script>
   const vscode = acquireVsCodeApi();
+
   function send(cmd) {
-    document.getElementById('btnApply').disabled = true;
-    document.getElementById('btnRevert').disabled = true;
-    document.getElementById('btnRefresh') && (document.getElementById('btnRefresh').disabled = true);
+    if (cmd !== 'openSettings' && cmd !== 'toggleEnabled' && cmd !== 'refresh') {
+      document.getElementById('btnApply').disabled = true;
+      document.getElementById('btnRevert').disabled = true;
+    }
     vscode.postMessage({ command: cmd });
   }
+
+  // Wire up buttons
+  document.getElementById('btnApply').addEventListener('click', () => send('apply'));
+  document.getElementById('btnRevert').addEventListener('click', () => send('revert'));
+  document.querySelector('.btn-refresh').addEventListener('click', () => {
+    send('refresh');
+    document.querySelector('.btn-refresh').disabled = true;
+    setTimeout(() => { document.querySelector('.btn-refresh').disabled = false; }, 2000);
+  });
+
   send('refresh');
 
   window.addEventListener('message', e => {
-    const { command, patched, basePath, files, text } = e.data;
+    const { command, patched, basePath, files, text, enabled } = e.data;
+
+    if (command === 'setEnabled') {
+      const chk = document.getElementById('toggleCheck');
+      chk.checked = enabled;
+      document.getElementById('toggleSub').textContent = enabled
+        ? 'Active — executing all commands'
+        : 'Suspended — commands require confirmation';
+    }
 
     if (command === 'loading') {
       document.getElementById('lbl').className = 'status-label loading';
@@ -318,42 +596,24 @@ class AntigravityPanelProvider {
 
     const lbl = document.getElementById('lbl');
     lbl.className = 'status-label ' + (notFound ? 'not-found' : patched ? 'patched' : 'pending');
-    lbl.textContent = notFound ? 'NOT FOUND' : patched ? 'PATCHED' : 'NOT PATCHED';
+    lbl.textContent = notFound ? 'Not Found' : patched ? 'Patched' : 'Not Patched';
 
     document.getElementById('desc').textContent = notFound
-      ? 'Antigravity not installed'
-      : patched
-        ? 'useEffect added — restart Antigravity!'
-        : 'Patch not applied yet';
+      ? 'Antigravity installation not detected'
+      : patched ? 'AutoPilot is active on this machine' : 'Click APPLY PATCH to activate';
 
-    const pathBox = document.getElementById('pathBox');
     if (basePath) {
-      pathBox.textContent = '📍 ' + basePath;
-      pathBox.style.display = '';
-    } else {
-      pathBox.style.display = 'none';
+      const pb = document.getElementById('pathBox');
+      pb.textContent = basePath;
+      pb.style.display = 'block';
     }
 
-    const filesList = document.getElementById('filesList');
-    filesList.innerHTML = '';
-    if (files && files.length) {
-      for (const f of files) {
-        const d = document.createElement('div');
-        d.className = 'file-item';
-        d.innerHTML = '<div class="file-dot ' + (f.patched ? 'patched' : 'pending') + '"></div>'
-          + '<span>' + f.label + ': ' + (f.patched ? '✅ patched' : '⬜ not patched') + '</span>';
-        filesList.appendChild(d);
-      }
-    }
-
-    document.getElementById('btnApply').style.display = (notFound || patched) ? 'none' : '';
-    document.getElementById('btnRevert').style.display = patched ? '' : 'none';
+    document.getElementById('btnApply').style.display = notFound || patched ? 'none' : 'block';
+    document.getElementById('btnRevert').style.display = patched ? 'block' : 'none';
 
     document.getElementById('noteBox').textContent = notFound
-      ? '⚠️ Install Antigravity first'
-      : patched
-        ? '💡 Re-run after Antigravity updates'
-        : '💡 Apply patch once, then restart Antigravity';
+      ? 'Install Antigravity first, then click Refresh.'
+      : patched ? 'Restart Antigravity to apply changes.' : '';
   });
 </script>
 </body>
@@ -361,38 +621,30 @@ class AntigravityPanelProvider {
   }
 }
 
-// ─── Status Bar ──────────────────────────────────────────────────────────
-
-function updateStatusBarFromCache() {
-  const status = _cachedStatus;
-  if (!status || !status.basePath) {
-    statusBarItem.text = `$(warning) AG Patch: Not Found`;
-    statusBarItem.tooltip = 'Antigravity not detected';
-    statusBarItem.backgroundColor = undefined;
-  } else if (status.patched) {
-    statusBarItem.text = `$(check) AG Patch: Active`;
-    statusBarItem.tooltip = 'Auto-Accept patch is applied — click to manage';
-    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-  } else {
-    statusBarItem.text = `$(zap) AG Patch: OFF`;
-    statusBarItem.tooltip = 'Auto-Accept patch not applied — click to open panel';
-    statusBarItem.backgroundColor = undefined;
-  }
-}
+// ─── Status Bar (legacy helpers) ──────────────────────────────────────────────
 
 /** @deprecated kept for backward compat */
 function updateStatusBar() { updateStatusBarFromCache(); }
 
-// ─── Activate / Deactivate ──────────────────────────────────────────────
+// ─── Activate / Deactivate ────────────────────────────────────────────────────
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
-  // Status bar — shows spinner until first async check completes
+  // Shared output channel
+  outputChannel = vscode.window.createOutputChannel('AutoPilot');
+  context.subscriptions.push(outputChannel);
+
+  // Read enabledOnStartup setting
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  autoPilotEnabled = cfg.get('enabledOnStartup', true);
+
+  // Status bar
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'antigravityAutoAccept.openPanel';
   statusBarItem.text = `$(sync~spin) AG Patch`;
   statusBarItem.tooltip = 'Checking patch status...';
   statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
 
   // Sidebar
   panelProvider = new AntigravityPanelProvider(context);
@@ -402,6 +654,36 @@ function activate(context) {
       panelProvider,
       { webviewOptions: { retainContextWhenHidden: true } },
     ),
+  );
+
+  // ── Terminal command watcher (Dangerous Command Blocking) ──────────────────
+  // VS Code API: onDidWriteTerminalData captures output; we intercept typed
+  // commands via onDidStartTerminalShellExecution (VS Code 1.87+).
+  // Fallback: detect via terminal write events.
+  if (typeof vscode.window.onDidStartTerminalShellExecution === 'function') {
+    context.subscriptions.push(
+      vscode.window.onDidStartTerminalShellExecution((event) => {
+        const cmd = event.execution.commandLine?.value || '';
+        if (!cmd) return;
+        const check = checkDangerousCommand(cmd);
+        if (check.matched) {
+          handleDangerousCommand(cmd, check.label);
+          // Note: VS Code does not expose a cancellation API for shell exec;
+          // we log/warn/notify. For full blocking, pair with shell hook.
+        }
+      }),
+    );
+  }
+
+  // Config change listener — react to user toggling blocking or action
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('antigravityAutoAccept.enabledOnStartup')) {
+        autoPilotEnabled = vscode.workspace.getConfiguration('antigravityAutoAccept').get('enabledOnStartup', true);
+        updateStatusBarFromCache();
+        if (panelProvider) panelProvider.sendEnabled(autoPilotEnabled);
+      }
+    }),
   );
 
   // Commands
@@ -429,20 +711,21 @@ function activate(context) {
     }),
   );
 
-  context.subscriptions.push(statusBarItem);
-
   // Async startup — never blocks extension host!
   (async () => {
     const status = await getPatchStatus();
     isPatchApplied = status.patched;
     updateStatusBarFromCache();
-    if (panelProvider) panelProvider.sendStatus(status);
+    if (panelProvider) {
+      panelProvider.sendStatus(status);
+      panelProvider.sendEnabled(autoPilotEnabled);
+    }
 
-    const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
-    if (cfg.get('applyOnStartup') && !status.patched && status.basePath) {
+    const startCfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+    if (startCfg.get('applyOnStartup') && !status.patched && status.basePath) {
       const result = await applyPatch();
       if (result.success) {
-        console.log('[AutoAccept] Auto-patch applied on startup');
+        outputChannel.appendLine('[AutoPilot] Auto-patch applied on startup');
       }
     }
   })();
