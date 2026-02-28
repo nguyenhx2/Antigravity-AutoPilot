@@ -28,7 +28,7 @@ let _cachedStatus = null;
 function runPatcher(command) {
   return new Promise((resolve, reject) => {
     const child = fork(PATCHER, [], { silent: true });
-    const channel = vscode.window.createOutputChannel('AutoAccept');
+    const channel = vscode.window.createOutputChannel('AutoPilot');
 
     child.on('message', (msg) => {
       if (!msg || typeof msg !== 'object') return;
@@ -259,8 +259,8 @@ class AntigravityPanelProvider {
 <div class="header">
   <span class="header-icon">⚡</span>
   <div>
-    <div class="header-title">Antigravity Auto-Accept</div>
-    <div class="header-sub">Patches "Always Proceed" to auto-run</div>
+    <div class="header-title">Antigravity AutoPilot</div>
+    <div class="header-sub">Auto-execute all tool calls &amp; commands</div>
   </div>
 </div>
 

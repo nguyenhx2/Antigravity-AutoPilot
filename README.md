@@ -1,38 +1,91 @@
-# Antigravity Auto-Accept
+# Antigravity AutoPilot
 
-Auto-accept Antigravity tool call prompts with a **one-click toggle** in the VS Code status bar.
+> Automatically execute all tool calls and terminal commands in Antigravity — no manual confirmation needed.
 
-## Features
+[![npm](https://img.shields.io/npm/v/antigravity-autopilot)](https://www.npmjs.com/package/antigravity-autopilot)
+[![GitHub](https://img.shields.io/badge/GitHub-Antigravity--AutoPilot-blue)](https://github.com/nguyenhx2/Antigravity-AutoPilot)
 
-- ⚡ **Status bar toggle** — Click to enable/disable auto-accept
-- 🎯 **Smart targeting** — Only sends keystrokes when VS Code is focused
-- ⌨️ **Keyboard shortcut** — `Ctrl+Shift+F12` to toggle
-- 📊 **Accept counter** — Shows how many commands were auto-accepted
-- ⚙️ **Configurable** — Adjust interval, auto-start on boot
+---
 
-## Installation
+## What it does
 
-```powershell
-# Run from this directory
-.\install.ps1
+Antigravity has an **"Always Proceed"** terminal execution policy, but due to a missing `useEffect` in its bundled JS, the policy never actually fires — commands still wait for manual approval.
+
+**Antigravity AutoPilot** patches the runtime JS bundle to inject the missing auto-accept logic, so every tool call and terminal command runs instantly when the policy is active.
+
+- ✅ Regex-based matching — works across Antigravity versions
+- ✅ Non-destructive — creates `.bak` backup before patching
+- ✅ Reversible — restore originals anytime with `--revert`
+- ✅ Available as VS Code Extension **and** CLI (`npx`)
+
+---
+
+## CLI Usage
+
+```bash
+# Apply the autopilot patch
+npx antigravity-autopilot
+
+# Check if already patched
+npx antigravity-autopilot --check
+
+# Revert to original files
+npx antigravity-autopilot --revert
 ```
 
-Then reload VS Code (`Ctrl+Shift+P` → "Developer: Reload Window").
+### Workflow
 
-## Usage
+```
+1. npx antigravity-autopilot   →  patch applied
+2. Restart Antigravity          →  AutoPilot active 🚀
+3. npx antigravity-autopilot --revert   →  undo anytime
+```
 
-1. Look for **`$(circle-slash) Auto-Accept: OFF`** in the status bar (bottom right)
-2. Click it or press `Ctrl+Shift+F12` to toggle ON
-3. When ON (⚡ yellow background), all Antigravity commands will be auto-accepted
-4. Click again to turn OFF
+---
 
-## Settings
+## VS Code Extension
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `antigravityAutoAccept.intervalMs` | `800` | Interval between accept attempts (ms) |
-| `antigravityAutoAccept.enabledOnStartup` | `false` | Auto-enable on VS Code start |
+Install the extension directly into Antigravity for a UI-based experience (sidebar panel, status bar, apply/revert commands):
 
-## How It Works
+```bash
+# Download .vsix from GitHub Releases, then:
+antigravity --install-extension antigravity-autopilot-1.0.0.vsix
+```
 
-Sends `Alt+A` (the Antigravity accept shortcut) via PowerShell `SendKeys` at a configurable interval, but **only** when VS Code is the foreground window.
+**Extension features:**
+- ⚡ Sidebar panel with one-click Apply / Revert
+- 📊 Status bar showing current patch state
+- ⌨️ Keyboard shortcut: `Ctrl+Shift+F12`
+- ⚙️ `applyOnStartup` setting for fully automatic operation
+
+---
+
+## How it works
+
+Antigravity bundles its UI as minified JavaScript. The patch locates the `setTerminalAutoExecutionPolicy` onChange handler and injects a `useEffect` that fires the auto-confirm function whenever the policy is set to `EAGER`:
+
+```js
+// Injected patch (conceptual):
+useEffect(() => {
+  if (policyVar === ENUM.EAGER && !secureMode) confirmFn(true);
+}, []);
+```
+
+Variable names are resolved via regex at runtime, making the patch resilient to minification changes between versions.
+
+---
+
+## Requirements
+
+- [Antigravity](https://antigravity.dev) installed on your system
+- Node.js 16+
+
+---
+
+## Repository
+
+[github.com/nguyenhx2/Antigravity-AutoPilot](https://github.com/nguyenhx2/Antigravity-AutoPilot)
+
+## License
+
+MIT

@@ -2,8 +2,15 @@
   "name": "antigravity-autopilot",
   "displayName": "Antigravity AutoPilot",
   "description": "Enables autopilot mode for Antigravity: automatically executes all tool calls and terminal commands without manual confirmation. Patches the runtime JS bundle to inject auto-accept logic whenever the 'Always Proceed' policy is active — regex-based and version-agnostic.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "nguyen-hoang",
+  "bin": {
+    "antigravity-autopilot": "./cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nguyenhx2/Antigravity-AutoPilot"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -15,14 +22,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "antigravity-auto-accept",
-          "title": "Antigravity Auto-Accept",
+          "id": "antigravity-autopilot",
+          "title": "Antigravity AutoPilot",
           "icon": "icon-sidebar.svg"
         }
       ]
     },
     "views": {
-      "antigravity-auto-accept": [
+      "antigravity-autopilot": [
         {
           "type": "webview",
           "id": "antigravityAutoAccept.panel",
