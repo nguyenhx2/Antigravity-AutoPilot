@@ -103,30 +103,71 @@ function section(title, icon) {
 
 // ─── Installation Detection ───────────────────────────────────────────────────
 
+function resolveFromBinary() {
+    try {
+        const { execFileSync } = require('child_process');
+        const cmd = process.platform === 'win32' ? 'where' : 'which';
+        const binPath = execFileSync(cmd, ['antigravity'], { encoding: 'utf8', timeout: 5000 }).trim().split('\n')[0].trim();
+        if (!binPath) return null;
+        const realBin = fs.realpathSync(binPath);
+        // Binary is typically at <installDir>/bin/antigravity or <installDir>/antigravity
+        let dir = path.dirname(realBin);
+        // Walk up to find the directory containing 'resources/app'
+        for (let i = 0; i < 5; i++) {
+            const check = path.join(dir, 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js');
+            if (fs.existsSync(check)) return dir;
+            const parent = path.dirname(dir);
+            if (parent === dir) break;
+            dir = parent;
+        }
+    } catch { /* binary not in PATH or not installed */ }
+    return null;
+}
+
 function findAntigravityPath() {
     const candidates = [];
     if (process.platform === 'win32') {
         candidates.push(
             path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Antigravity'),
             path.join(process.env.PROGRAMFILES || '', 'Antigravity'),
+            path.join(process.env['PROGRAMFILES(X86)'] || '', 'Antigravity'),
         );
     } else if (process.platform === 'darwin') {
         candidates.push(
             '/Applications/Antigravity.app/Contents/Resources',
             path.join(os.homedir(), 'Applications', 'Antigravity.app', 'Contents', 'Resources'),
+            // Homebrew cask installs
+            '/opt/homebrew/Caskroom/antigravity',
         );
+        // Dynamically scan Homebrew cask versions
+        try {
+            const caskDir = '/opt/homebrew/Caskroom/antigravity';
+            if (fs.existsSync(caskDir)) {
+                const versions = fs.readdirSync(caskDir).filter(v => v !== '.metadata');
+                for (const v of versions) {
+                    candidates.push(path.join(caskDir, v, 'Antigravity.app', 'Contents', 'Resources'));
+                }
+            }
+        } catch { /* ignore */ }
     } else {
         candidates.push(
             '/usr/share/antigravity',
+            '/usr/lib/antigravity',
             '/opt/antigravity',
             path.join(os.homedir(), '.local', 'share', 'antigravity'),
+            // Snap install
+            '/snap/antigravity/current',
+            // Flatpak install
+            '/var/lib/flatpak/app/com.antigravity.Antigravity/current/active/files',
+            path.join(os.homedir(), '.local', 'share', 'flatpak', 'app', 'com.antigravity.Antigravity', 'current', 'active', 'files'),
         );
     }
     for (const c of candidates) {
         const f = path.join(c, 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js');
         if (fs.existsSync(f)) return c;
     }
-    return null;
+    // Fallback: resolve from the antigravity binary in PATH
+    return resolveFromBinary();
 }
 
 function getTargetFiles(basePath) {
