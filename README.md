@@ -1,7 +1,7 @@
 # Antigravity AutoPilot
 
 <p align="center">
-  <img src="icon.png" width="128" alt="Antigravity AutoPilot Logo">
+  <img src="https://raw.githubusercontent.com/nguyenhx2/Antigravity-AutoPilot/master/icon.png" width="128" alt="Antigravity AutoPilot Logo">
 </p>
 
 > Automatically execute all tool calls and terminal commands in Antigravity — no manual confirmation needed.

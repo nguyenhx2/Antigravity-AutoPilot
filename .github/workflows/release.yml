@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Build VSIX
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          vsce package --no-dependencies -o "antigravity-autopilot-${VERSION}.vsix"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true
+          body: |
+            ## Antigravity AutoPilot ${{ github.ref_name }}
+
+            ### Install
+
+            **CLI (npm):**
+            ```bash
+            npm i -g antigravity-autopilot
+            ```
+
+            **VS Code Extension:**
+            Download the `.vsix` file below and install:
+            ```bash
+            antigravity --install-extension antigravity-autopilot-*.vsix
+            ```
