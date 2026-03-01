@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install vsce
         run: npm install -g @vscode/vsce
@@ -31,20 +31,41 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: '*.vsix'
+          files: "*.vsix"
           generate_release_notes: true
           body: |
             ## Antigravity AutoPilot ${{ github.ref_name }}
 
             ### Install
 
-            **CLI (npm):**
+            **CLI (recommended — always runs latest version):**
+            ```bash
+            npx antigravity-autopilot
+            ```
+
+            **CLI (global install):**
             ```bash
             npm i -g antigravity-autopilot
+            antigravity-autopilot
             ```
 
             **VS Code Extension:**
             Download the `.vsix` file below and install:
             ```bash
             antigravity --install-extension antigravity-autopilot-*.vsix
+            ```
+
+            ### Patch Types
+            | Type | Description |
+            |------|-------------|
+            | `terminal` | Auto-execute terminal commands |
+            | `browser` | Auto-confirm browser actions |
+            | `file` | Auto-allow file permissions |
+
+            ### Usage
+            ```bash
+            npx antigravity-autopilot              # Apply all patches
+            npx antigravity-autopilot --only terminal  # Patch terminal only
+            npx antigravity-autopilot --check      # Check status
+            npx antigravity-autopilot --revert     # Restore originals
             ```

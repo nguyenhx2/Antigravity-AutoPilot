@@ -36,6 +36,25 @@ Antigravity has an **"Always Proceed"** terminal execution policy, but due to mi
 
 ---
 
+## Installation
+
+**Option 1 — `npx` (recommended):** No install needed. Always runs the latest version:
+
+```bash
+npx antigravity-autopilot
+```
+
+**Option 2 — Global install:** Installs permanently, runs offline. Remember to update manually:
+
+```bash
+npm i -g antigravity-autopilot
+antigravity-autopilot
+```
+
+> **Which to choose?** Use `npx` unless you need offline access or run the tool frequently. `npx` always fetches the latest version automatically, while `npm i -g` keeps the installed version until you run `npm update -g`.
+
+---
+
 ## CLI Usage
 
 ```bash
