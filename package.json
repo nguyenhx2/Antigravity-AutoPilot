@@ -4,7 +4,7 @@
   "description": "Enables autopilot mode for Antigravity: automatically executes all tool calls and terminal commands without manual confirmation. Patches the runtime JS bundle to inject auto-accept logic whenever the 'Always Proceed' policy is active — regex-based and version-agnostic.",
   "version": "1.4.5",
   "license": "MIT",
-  "publisher": "nguyen-hoang",
+  "publisher": "nguyenhx2",
   "bin": {
     "antigravity-autopilot": "./cli.js"
   },
