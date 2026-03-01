@@ -2,7 +2,7 @@
   "name": "antigravity-autopilot",
   "displayName": "Antigravity AutoPilot",
   "description": "Enables autopilot mode for Antigravity: automatically executes all tool calls and terminal commands without manual confirmation. Patches the runtime JS bundle to inject auto-accept logic whenever the 'Always Proceed' policy is active — regex-based and version-agnostic.",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "license": "MIT",
   "publisher": "nguyen-hoang",
   "bin": {
@@ -37,57 +37,57 @@
       "antigravity-autopilot": [
         {
           "type": "webview",
-          "id": "antigravityAutoAccept.panel",
+          "id": "antigravityAutoPilot.panel",
           "name": "AutoPilot"
         }
       ]
     },
     "commands": [
       {
-        "command": "antigravityAutoAccept.applyPatch",
+        "command": "antigravityAutoPilot.applyPatch",
         "title": "Antigravity: Apply AutoPilot Patch",
         "icon": "$(zap)"
       },
       {
-        "command": "antigravityAutoAccept.revertPatch",
+        "command": "antigravityAutoPilot.revertPatch",
         "title": "Antigravity: Revert AutoPilot Patch",
         "icon": "$(discard)"
       },
       {
-        "command": "antigravityAutoAccept.checkStatus",
+        "command": "antigravityAutoPilot.checkStatus",
         "title": "Antigravity: Check Patch Status",
         "icon": "$(info)"
       },
       {
-        "command": "antigravityAutoAccept.openPanel",
+        "command": "antigravityAutoPilot.openPanel",
         "title": "Antigravity: Open AutoPilot Panel"
       }
     ],
     "keybindings": [
       {
-        "command": "antigravityAutoAccept.applyPatch",
+        "command": "antigravityAutoPilot.applyPatch",
         "key": "ctrl+shift+f12"
       }
     ],
     "configuration": {
       "title": "Antigravity AutoPilot",
       "properties": {
-        "antigravityAutoAccept.applyOnStartup": {
+        "antigravityAutoPilot.applyOnStartup": {
           "type": "boolean",
           "default": false,
           "description": "Automatically apply the AutoPilot patch when VS Code starts. Safe to enable — patch is idempotent."
         },
-        "antigravityAutoAccept.enabledOnStartup": {
+        "antigravityAutoPilot.enabledOnStartup": {
           "type": "boolean",
           "default": true,
           "description": "Keep AutoPilot enabled (active) when VS Code starts. When disabled, AutoPilot will be suspended until manually turned on from the sidebar."
         },
-        "antigravityAutoAccept.dangerousCommandBlocking.enabled": {
+        "antigravityAutoPilot.dangerousCommandBlocking.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Block dangerous terminal commands (e.g. rm -rf /, format C:) before they execute. Fully customizable via the blocklist setting."
         },
-        "antigravityAutoAccept.dangerousCommandBlocking.action": {
+        "antigravityAutoPilot.dangerousCommandBlocking.action": {
           "type": "string",
           "enum": [
             "block",
@@ -102,7 +102,7 @@
           "default": "block",
           "description": "Action to take when a dangerous command is detected."
         },
-        "antigravityAutoAccept.dangerousCommandBlocking.customPatterns": {
+        "antigravityAutoPilot.dangerousCommandBlocking.customPatterns": {
           "type": "array",
           "items": {
             "type": "string"
@@ -110,12 +110,12 @@
           "default": [],
           "description": "Additional regex patterns (JavaScript syntax) to treat as dangerous commands. Example: [\"^dd if=.*of=/dev/sd\", \"^shred\"]"
         },
-        "antigravityAutoAccept.autoAcceptBrowserPermission": {
+        "antigravityAutoPilot.browserPermission": {
           "type": "boolean",
           "default": true,
           "description": "Automatically accept browser action permissions (e.g. 'Agent needs permission to act on chromewebdata'). Requires patch to be applied."
         },
-        "antigravityAutoAccept.autoAcceptFilePermission": {
+        "antigravityAutoPilot.filePermission": {
           "type": "boolean",
           "default": true,
           "description": "Automatically allow file access permissions with conversation scope. Requires patch to be applied."

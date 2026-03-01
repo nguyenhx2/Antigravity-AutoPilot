@@ -112,7 +112,7 @@ function getActiveBuiltinPatterns() {
  * @returns {{ matched: boolean, label: string, pattern: string }}
  */
 function checkDangerousCommand(cmd) {
-  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
   const enabled = cfg.get('dangerousCommandBlocking.enabled', true);
   if (!enabled) return { matched: false, label: '', pattern: '' };
 
@@ -149,7 +149,7 @@ function checkDangerousCommand(cmd) {
  * @param {string} label - Human-readable reason
  */
 function handleDangerousCommand(cmd, label) {
-  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
   const action = cfg.get('dangerousCommandBlocking.action', 'block');
   const msg = `🛡️ Dangerous command detected: "${label}" — \`${cmd.trim().substring(0, 80)}\``;
 
@@ -326,16 +326,16 @@ class AntigravityPanelProvider {
       } else if (msg.command === 'toggleEnabled') {
         autoPilotEnabled = !autoPilotEnabled;
         updateStatusBarFromCache();
-        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
         await cfg.update('enabledOnStartup', autoPilotEnabled, vscode.ConfigurationTarget.Global);
         if (panelProvider) panelProvider.sendEnabled(autoPilotEnabled);
         vscode.window.showInformationMessage(
           autoPilotEnabled ? '⚡ AutoPilot resumed' : '⏸ AutoPilot suspended',
         );
       } else if (msg.command === 'openSettings') {
-        vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityAutoAccept');
+        vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityAutoPilot');
       } else if (msg.command === 'toggleCommandBlocking') {
-        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
         const current = cfg.get('dangerousCommandBlocking.enabled', true);
         const next = !current;
         await cfg.update('dangerousCommandBlocking.enabled', next, vscode.ConfigurationTarget.Global);
@@ -344,19 +344,19 @@ class AntigravityPanelProvider {
           next ? '🛡️ Command Blocking enabled' : '⚠️ Command Blocking disabled',
         );
       } else if (msg.command === 'toggleBrowserPermission') {
-        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
-        const current = cfg.get('autoAcceptBrowserPermission', true);
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
+        const current = cfg.get('browserPermission', true);
         const next = !current;
-        await cfg.update('autoAcceptBrowserPermission', next, vscode.ConfigurationTarget.Global);
+        await cfg.update('browserPermission', next, vscode.ConfigurationTarget.Global);
         this.sendBrowserPermissionEnabled(next);
         vscode.window.showInformationMessage(
           next ? '🌐 Auto-accept browser permission enabled' : '🌐 Auto-accept browser permission disabled',
         );
       } else if (msg.command === 'toggleFilePermission') {
-        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
-        const current = cfg.get('autoAcceptFilePermission', true);
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
+        const current = cfg.get('filePermission', true);
         const next = !current;
-        await cfg.update('autoAcceptFilePermission', next, vscode.ConfigurationTarget.Global);
+        await cfg.update('filePermission', next, vscode.ConfigurationTarget.Global);
         this.sendFilePermissionEnabled(next);
         vscode.window.showInformationMessage(
           next ? '📁 Auto-accept file permission enabled' : '📁 Auto-accept file permission disabled',
@@ -380,13 +380,13 @@ class AntigravityPanelProvider {
     refreshStatus();
     this.sendEnabled(autoPilotEnabled);
     this.sendBlockingEnabled(
-      vscode.workspace.getConfiguration('antigravityAutoAccept').get('dangerousCommandBlocking.enabled', true),
+      vscode.workspace.getConfiguration('antigravityAutoPilot').get('dangerousCommandBlocking.enabled', true),
     );
     this.sendBrowserPermissionEnabled(
-      vscode.workspace.getConfiguration('antigravityAutoAccept').get('autoAcceptBrowserPermission', true),
+      vscode.workspace.getConfiguration('antigravityAutoPilot').get('browserPermission', true),
     );
     this.sendFilePermissionEnabled(
-      vscode.workspace.getConfiguration('antigravityAutoAccept').get('autoAcceptFilePermission', true),
+      vscode.workspace.getConfiguration('antigravityAutoPilot').get('filePermission', true),
     );
     this.sendPatterns();
   }
@@ -894,12 +894,12 @@ function activate(context) {
   context.subscriptions.push(outputChannel);
 
   // Read enabledOnStartup setting
-  const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+  const cfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
   autoPilotEnabled = cfg.get('enabledOnStartup', true);
 
   // Status bar
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.command = 'antigravityAutoAccept.openPanel';
+  statusBarItem.command = 'antigravityAutoPilot.openPanel';
   statusBarItem.text = `$(sync~spin) AG Patch`;
   statusBarItem.tooltip = 'Checking patch status...';
   statusBarItem.show();
@@ -909,7 +909,7 @@ function activate(context) {
   panelProvider = new AntigravityPanelProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
-      'antigravityAutoAccept.panel',
+      'antigravityAutoPilot.panel',
       panelProvider,
       { webviewOptions: { retainContextWhenHidden: true } },
     ),
@@ -932,8 +932,8 @@ function activate(context) {
   // Config change listener
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('antigravityAutoAccept.enabledOnStartup')) {
-        autoPilotEnabled = vscode.workspace.getConfiguration('antigravityAutoAccept').get('enabledOnStartup', true);
+      if (e.affectsConfiguration('antigravityAutoPilot.enabledOnStartup')) {
+        autoPilotEnabled = vscode.workspace.getConfiguration('antigravityAutoPilot').get('enabledOnStartup', true);
         updateStatusBarFromCache();
         if (panelProvider) panelProvider.sendEnabled(autoPilotEnabled);
       }
@@ -942,18 +942,18 @@ function activate(context) {
 
   // Commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('antigravityAutoAccept.applyPatch', async () => {
+    vscode.commands.registerCommand('antigravityAutoPilot.applyPatch', async () => {
       const result = await applyPatch();
       vscode.window.showInformationMessage(result.message);
     }),
-    vscode.commands.registerCommand('antigravityAutoAccept.revertPatch', async () => {
+    vscode.commands.registerCommand('antigravityAutoPilot.revertPatch', async () => {
       const result = await revertPatch();
       vscode.window.showInformationMessage(result.message);
     }),
-    vscode.commands.registerCommand('antigravityAutoAccept.openPanel', () => {
-      vscode.commands.executeCommand('antigravityAutoAccept.panel.focus');
+    vscode.commands.registerCommand('antigravityAutoPilot.openPanel', () => {
+      vscode.commands.executeCommand('antigravityAutoPilot.panel.focus');
     }),
-    vscode.commands.registerCommand('antigravityAutoAccept.checkStatus', async () => {
+    vscode.commands.registerCommand('antigravityAutoPilot.checkStatus', async () => {
       const status = await getPatchStatus();
       if (!status.basePath) {
         vscode.window.showWarningMessage('Antigravity not found!');
@@ -975,7 +975,7 @@ function activate(context) {
       panelProvider.sendEnabled(autoPilotEnabled);
     }
 
-    const startCfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+    const startCfg = vscode.workspace.getConfiguration('antigravityAutoPilot');
     if (startCfg.get('applyOnStartup') && !status.patched && status.basePath) {
       const result = await applyPatch();
       if (result.success) {

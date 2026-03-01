@@ -95,7 +95,7 @@ Built-in protection against destructive commands. **54+ preset patterns** coveri
 Add your own patterns via Settings:
 
 ```json
-"antigravityAutoAccept.dangerousCommandBlocking.customPatterns": [
+"antigravityAutoPilot.dangerousCommandBlocking.customPatterns": [
   "^my-dangerous-script",
   "DROP TABLE"
 ]

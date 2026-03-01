@@ -1,6 +1,6 @@
 # Antigravity Auto-Accept - Floating Panel
 # A small always-on-top window for toggling auto-accept
-# Run with: powershell -WindowStyle Hidden -File AutoAccept.ps1
+# Run with: powershell -WindowStyle Hidden -File AutoPilot.ps1
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

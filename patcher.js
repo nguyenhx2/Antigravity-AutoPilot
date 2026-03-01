@@ -95,7 +95,7 @@ function getTargetFiles(basePath) {
  * Port of: https://github.com/Kanezal/better-antigravity/blob/main/fixes/auto-run-fix/patch.js
  */
 function analyzeFile(content, label) {
-    const log = (msg) => process.send({ type: 'log', msg: `[AutoAccept] [${label}] ${msg}` });
+    const log = (msg) => process.send({ type: 'log', msg: `[AutoPilot] [${label}] ${msg}` });
 
     // 1. Find the onChange handler: contains setTerminalAutoExecutionPolicy AND .EAGER
     //    Pattern: VARNAME=CALLBACK(ARG=>{...setTerminalAutoExecutionPolicy...,ARG===ENUM.EAGER&&CONFIRM(!0)},[...])
@@ -196,7 +196,7 @@ function analyzeFile(content, label) {
  * Pattern: COMP=({sourceTrajectoryStepInfo:VAR,...,url:VAR})=>{...CONFIRM_FN=Mt(()=>{SEND(Ui(MSG,{...,interaction:{case:"browserAction",value:Ui(TYPE,{confirm:!0})}}))},...)...}
  */
 function analyzeBrowserAction(content, label) {
-    const log = (msg) => process.send({ type: 'log', msg: `[AutoAccept] [${label}] [browser] ${msg}` });
+    const log = (msg) => process.send({ type: 'log', msg: `[AutoPilot] [${label}] [browser] ${msg}` });
 
     // 1. Find the browserAction confirm:!0 callback pattern
     //    VAR=Mt(()=>{SEND(Ui(MSG,{trajectoryId:VAR,stepIndex:VAR,interaction:{case:"browserAction",value:Ui(TYPE,{confirm:!0})}}))},DEPS)
@@ -267,7 +267,7 @@ function analyzeBrowserAction(content, label) {
  * Pattern: COMP=({sourceTrajectoryStepInfo:VAR,req:VAR,status:VAR})=>{...SEND_FN...filePermission...scope...}
  */
 function analyzeFilePermission(content, label) {
-    const log = (msg) => process.send({ type: 'log', msg: `[AutoAccept] [${label}] [file] ${msg}` });
+    const log = (msg) => process.send({ type: 'log', msg: `[AutoPilot] [${label}] [file] ${msg}` });
 
     // 1. Find the filePermission sender pattern
     //    VAR=(ALLOW_VAR,SCOPE_VAR)=>{SEND(Ui(MSG,{trajectoryId:VAR,stepIndex:VAR,interaction:{case:"filePermission",value:Ui(TYPE,{allow:ALLOW_VAR,scope:SCOPE_VAR,absolutePathUri:REQ.absolutePathUri})}}))};
@@ -360,7 +360,7 @@ function isFilePatched(filePath) {
 
 function patchFile(filePath, label) {
     if (!fs.existsSync(filePath)) {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] File not found, skipping` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] File not found, skipping` });
         return true; // optional file missing is not a failure
     }
 
@@ -368,7 +368,7 @@ function patchFile(filePath, label) {
     try {
         content = fs.readFileSync(filePath, 'utf8');
     } catch (e) {
-        process.send({ type: 'log', msg: `[AutoAccept] ❌ [${label}] Read error: ${e.message}` });
+        process.send({ type: 'log', msg: `[AutoPilot] ❌ [${label}] Read error: ${e.message}` });
         return false;
     }
 
@@ -376,7 +376,7 @@ function patchFile(filePath, label) {
     const bakPath = filePath + '.bak';
     if (!fs.existsSync(bakPath)) {
         fs.copyFileSync(filePath, bakPath);
-        process.send({ type: 'log', msg: `[AutoAccept] 📦 [${label}] Backup created` });
+        process.send({ type: 'log', msg: `[AutoPilot] 📦 [${label}] Backup created` });
     }
 
     let patched = content;
@@ -390,13 +390,13 @@ function patchFile(filePath, label) {
             if (count === 1) {
                 patched = patched.replace(analysis.target, analysis.replacement);
                 anyPatched = true;
-                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Terminal auto-execute patched` });
+                process.send({ type: 'log', msg: `[AutoPilot] ✅ [${label}] Terminal auto-execute patched` });
             } else {
-                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] Terminal target found ${count}x (expected 1)` });
+                process.send({ type: 'log', msg: `[AutoPilot] ⚠️ [${label}] Terminal target found ${count}x (expected 1)` });
             }
         }
     } else {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] Terminal already patched` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] Terminal already patched` });
     }
 
     // ── Browser action auto-confirm patch ──
@@ -407,13 +407,13 @@ function patchFile(filePath, label) {
             if (count === 1) {
                 patched = patched.replace(browserAnalysis.target, browserAnalysis.replacement);
                 anyPatched = true;
-                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Browser action auto-confirm patched` });
+                process.send({ type: 'log', msg: `[AutoPilot] ✅ [${label}] Browser action auto-confirm patched` });
             } else {
-                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] Browser target found ${count}x (expected 1)` });
+                process.send({ type: 'log', msg: `[AutoPilot] ⚠️ [${label}] Browser target found ${count}x (expected 1)` });
             }
         }
     } else {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] Browser action already patched` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] Browser action already patched` });
     }
 
     // ── File permission auto-allow patch ──
@@ -424,24 +424,24 @@ function patchFile(filePath, label) {
             if (count === 1) {
                 patched = patched.replace(fileAnalysis.target, fileAnalysis.replacement);
                 anyPatched = true;
-                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] File permission auto-allow patched` });
+                process.send({ type: 'log', msg: `[AutoPilot] ✅ [${label}] File permission auto-allow patched` });
             } else {
-                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] File target found ${count}x (expected 1)` });
+                process.send({ type: 'log', msg: `[AutoPilot] ⚠️ [${label}] File target found ${count}x (expected 1)` });
             }
         }
     } else {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] File permission already patched` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] File permission already patched` });
     }
 
     if (anyPatched) {
         fs.writeFileSync(filePath, patched, 'utf8');
         const sizeDiff = fs.statSync(filePath).size - fs.statSync(bakPath).size;
-        process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] All patches applied (+${sizeDiff} bytes)` });
+        process.send({ type: 'log', msg: `[AutoPilot] ✅ [${label}] All patches applied (+${sizeDiff} bytes)` });
     } else if (!content.includes('_aep=') && !content.includes('_abp=') && !content.includes('_afp=')) {
-        process.send({ type: 'log', msg: `[AutoAccept] ❌ [${label}] No patches could be applied` });
+        process.send({ type: 'log', msg: `[AutoPilot] ❌ [${label}] No patches could be applied` });
         return false;
     } else {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] All patches already applied` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] All patches already applied` });
     }
     return true;
 }
@@ -449,11 +449,11 @@ function patchFile(filePath, label) {
 function revertFile(filePath, label) {
     const bak = filePath + '.bak';
     if (!fs.existsSync(bak)) {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] No backup, skipping` });
+        process.send({ type: 'log', msg: `[AutoPilot] ⏭️  [${label}] No backup, skipping` });
         return;
     }
     fs.copyFileSync(bak, filePath);
-    process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Reverted` });
+    process.send({ type: 'log', msg: `[AutoPilot] ✅ [${label}] Reverted` });
 }
 
 // ─── Message Handler ──────────────────────────────────────────────────────────
@@ -501,7 +501,7 @@ process.on('message', (msg) => {
             success,
             message: success
                 ? '✅ Patch thành công! Restart Antigravity để áp dụng.'
-                : '⚠️ Một số file không patch được. Xem Output > AutoAccept để biết chi tiết.',
+                : '⚠️ Một số file không patch được. Xem Output > AutoPilot để biết chi tiết.',
         });
         process.exit(success ? 0 : 1);
 
