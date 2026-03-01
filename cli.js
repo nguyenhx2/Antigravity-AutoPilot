@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity AutoPilot — CLI v1.3.0
+ * Antigravity AutoPilot — CLI v1.4.0
  * ====================================
- *   npx antigravity-autopilot           Apply patch
- *   npx antigravity-autopilot --check   Check status
- *   npx antigravity-autopilot --revert  Restore originals
- *   npx antigravity-autopilot --help    Show help
+ *   npx antigravity-autopilot                Apply all patches
+ *   npx antigravity-autopilot --only terminal  Patch terminal only
+ *   npx antigravity-autopilot --only browser   Patch browser only
+ *   npx antigravity-autopilot --only file      Patch file only
+ *   npx antigravity-autopilot --check        Check status
+ *   npx antigravity-autopilot --revert       Restore originals
+ *   npx antigravity-autopilot --help         Show help
  */
 
 'use strict';
@@ -71,7 +74,8 @@ function printBanner() {
 
 function printHelp() {
     const cmds = [
-        ['(no args)', 'Apply the AutoPilot patch'],
+        ['(no args)', 'Apply all patches (terminal, browser, file)'],
+        ['--only TYPE', 'Patch only: terminal | browser | file'],
         ['--check', 'Check current patch status'],
         ['--revert', 'Restore original files'],
         ['--help', 'Show this help screen'],
@@ -82,8 +86,14 @@ function printHelp() {
     console.log(c.bold + c.white + '  OPTIONS' + c.reset);
     console.log(c.gray + '  ─────────────────────────────────────────────' + c.reset);
     for (const [flag, desc] of cmds) {
-        console.log('  ' + c.yellow + c.bold + flag.padEnd(12) + c.reset + '  ' + c.white + desc + c.reset);
+        console.log('  ' + c.yellow + c.bold + flag.padEnd(14) + c.reset + '  ' + c.white + desc + c.reset);
     }
+    console.log('');
+    console.log(c.bold + c.white + '  PATCH TYPES' + c.reset);
+    console.log(c.gray + '  ─────────────────────────────────────────────' + c.reset);
+    console.log('  ' + c.cyan + 'terminal' + c.reset + '      Auto-execute terminal commands');
+    console.log('  ' + c.cyan + 'browser' + c.reset + '       Auto-confirm browser actions');
+    console.log('  ' + c.cyan + 'file' + c.reset + '          Auto-allow file permissions');
     console.log('');
     console.log(c.bold + c.white + '  WORKFLOW' + c.reset);
     console.log(c.gray + '  ─────────────────────────────────────────────' + c.reset);
@@ -185,12 +195,12 @@ function getVersion(basePath) {
     } catch { return 'unknown'; }
 }
 
-// ─── Core Patch Logic ─────────────────────────────────────────────────────────
+// ─── Analyze: Terminal Auto-Execute ───────────────────────────────────────────
 
-function analyzeFile(content, label) {
+function analyzeTerminal(content) {
     const onChangeRe = /(\w+)=(\w+)\((\w+)=>\{\w+\?\.setTerminalAutoExecutionPolicy\?\.\(\3\),\3===(\w+)\.EAGER\&\&(\w+)\(!0\)\},\[[\w,]*\]\)/;
     const onChangeMatch = content.match(onChangeRe);
-    if (!onChangeMatch) { return null; }
+    if (!onChangeMatch) return null;
 
     const [fullMatch, , callbackAlias, , enumAlias, confirmFn] = onChangeMatch;
     const matchIndex = content.indexOf(fullMatch);
@@ -235,50 +245,183 @@ function analyzeFile(content, label) {
     };
 }
 
-// ─── File Operations ──────────────────────────────────────────────────────────
+// ─── Analyze: Browser Action Auto-Confirm ─────────────────────────────────────
 
-function isPatched(filePath) {
-    if (!fs.existsSync(filePath)) return false;
-    const c = fs.readFileSync(filePath, 'utf8');
-    return c.includes('_aep=') && /_aep=\w+\(()=>\{[^}]+EAGER/.test(c);
+function analyzeBrowser(content) {
+    // Find the browserAction confirm:!0 callback pattern
+    const confirmRe = /(\w+)=Mt\(\(\)=>\{(\w+)\(Ui\((\w+),\{trajectoryId:(\w+),stepIndex:(\w+),interaction:\{case:"browserAction",value:Ui\((\w+),\{confirm:!0\}\)\}\}\)\)\},\[([\w,]*)\]\)/;
+    const confirmMatch = content.match(confirmRe);
+    if (!confirmMatch) return null;
+
+    const [fullMatch, confirmVar] = confirmMatch;
+    const matchIndex = content.indexOf(fullMatch);
+
+    // Find useEffect alias
+    const nearbyCode = content.substring(Math.max(0, matchIndex - 5000), matchIndex + 5000);
+    const effectCandidates = {};
+    const effectRe = /\b(\w{2,3})\(\(\)=>\{[^}]{3,80}\},\[/g;
+    let m;
+    while ((m = effectRe.exec(nearbyCode)) !== null) {
+        const alias = m[1];
+        if (alias !== 'Mt' && alias !== 'Vi' && alias !== 'var' && alias !== 'new') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 1;
+        }
+    }
+    const cleanupRe = /\b(\w{2,3})\(\(\)=>\{[^}]*return\s*\(\)=>/g;
+    while ((m = cleanupRe.exec(content)) !== null) {
+        const alias = m[1];
+        if (alias !== 'Mt' && alias !== 'Vi') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 5;
+        }
+    }
+    let useEffectAlias = null, maxCount = 0;
+    for (const [alias, count] of Object.entries(effectCandidates)) {
+        if (count > maxCount) { maxCount = count; useEffectAlias = alias; }
+    }
+    if (!useEffectAlias) return null;
+
+    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}]),`;
+    return {
+        target: fullMatch,
+        replacement: patchCode + fullMatch,
+        patchMarker: `_abp=${useEffectAlias}(()=>{${confirmVar}()}`,
+    };
 }
+
+// ─── Analyze: File Permission Auto-Allow ──────────────────────────────────────
+
+function analyzeFile_(content) {
+    // Find the filePermission sender pattern
+    const senderRe = /(\w+)=\((\w+),(\w+)\)=>\{(\w+)\(Ui\((\w+),\{trajectoryId:(\w+),stepIndex:(\w+),interaction:\{case:"filePermission",value:Ui\((\w+),\{allow:\2,scope:\3,absolutePathUri:(\w+)\.absolutePathUri\}\)\}\}\)\)\}/;
+    const senderMatch = content.match(senderRe);
+    if (!senderMatch) return null;
+
+    const [fullMatch, senderVar, , , , , , , , reqVar] = senderMatch;
+    const matchIndex = content.indexOf(fullMatch);
+
+    // Find scope enum — look for senderVar(!0, ENUM.CONVERSATION)
+    const scopeRe = new RegExp(`${senderVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\(!0,(\\w+)\\.CONVERSATION\\)`);
+    const scopeMatch = content.substring(matchIndex, matchIndex + 2000).match(scopeRe);
+    if (!scopeMatch) return null;
+    const scopeEnum = scopeMatch[1];
+
+    // Find useEffect alias
+    const nearbyCode = content.substring(Math.max(0, matchIndex - 5000), matchIndex + 5000);
+    const effectCandidates = {};
+    const effectRe = /\b(\w{2,3})\(\(\)=>\{[^}]{3,80}\},\[/g;
+    let m2;
+    while ((m2 = effectRe.exec(nearbyCode)) !== null) {
+        const alias = m2[1];
+        if (alias !== 'Mt' && alias !== 'Vi' && alias !== 'var' && alias !== 'new') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 1;
+        }
+    }
+    const cleanupRe = /\b(\w{2,3})\(\(\)=>\{[^}]*return\s*\(\)=>/g;
+    while ((m2 = cleanupRe.exec(content)) !== null) {
+        const alias = m2[1];
+        if (alias !== 'Mt' && alias !== 'Vi') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 5;
+        }
+    }
+    let useEffectAlias = null, maxCount = 0;
+    for (const [alias, count] of Object.entries(effectCandidates)) {
+        if (count > maxCount) { maxCount = count; useEffectAlias = alias; }
+    }
+    if (!useEffectAlias) return null;
+
+    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}]),`;
+    return {
+        target: fullMatch,
+        replacement: patchCode + fullMatch,
+        patchMarker: `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)`,
+    };
+}
+
+// ─── Patch Status Detection ───────────────────────────────────────────────────
+
+const PATCH_TYPES = ['terminal', 'browser', 'file'];
+const PATCH_LABELS = { terminal: 'Terminal auto-execute', browser: 'Browser auto-confirm', file: 'File auto-allow' };
+const PATCH_MARKERS = {
+    terminal: { includes: '_aep=', re: /_aep=\w+\(\(\)=>\{[^}]+EAGER/ },
+    browser: { includes: '_abp=', re: /_abp=\w+\(\(\)=>\{\w+\(\)\}/ },
+    file: { includes: '_afp=', re: /_afp=\w+\(\(\)=>\{\w+\(!0,/ },
+};
+const ANALYZERS = {
+    terminal: analyzeTerminal,
+    browser: analyzeBrowser,
+    file: analyzeFile_,
+};
+
+function getPatchStatus(content) {
+    const status = {};
+    for (const type of PATCH_TYPES) {
+        const m = PATCH_MARKERS[type];
+        status[type] = content.includes(m.includes) && m.re.test(content);
+    }
+    return status;
+}
+
+// ─── Display Helpers ──────────────────────────────────────────────────────────
 
 function row(icon, color, label, msg) {
     console.log('  ' + color + icon + c.reset + '  ' + c.bold + label.padEnd(14) + c.reset + c.gray + msg + c.reset);
 }
 
-function patchFile(filePath, label) {
+function patchRow(icon, color, fileLabel, patchType, msg) {
+    const combined = `[${fileLabel}]`;
+    console.log('  ' + color + icon + c.reset + '  ' + c.bold + combined.padEnd(16) + c.reset + c.cyan + patchType.padEnd(10) + c.reset + c.gray + msg + c.reset);
+}
+
+// ─── File Operations ──────────────────────────────────────────────────────────
+
+function patchFile(filePath, label, onlyTypes) {
     if (!fs.existsSync(filePath)) {
         row('⊘', c.gray, `[${label}]`, 'File not found — skipping');
         return true;
     }
+
     const content = fs.readFileSync(filePath, 'utf8');
-    if (isPatched(filePath)) {
-        row('✔', c.green, `[${label}]`, 'Already patched');
-        return true;
-    }
-    const analysis = analyzeFile(content, label);
-    if (!analysis) {
-        row('✖', c.red, `[${label}]`, 'Pattern not found — may be incompatible version');
-        return false;
+    const status = getPatchStatus(content);
+    const typesToPatch = onlyTypes || PATCH_TYPES;
+
+    let patched = content;
+    let anyNewPatch = false;
+    let anyFailure = false;
+
+    for (const type of typesToPatch) {
+        if (status[type]) {
+            patchRow('✔', c.green, label, type, 'Already patched — skipped');
+            continue;
+        }
+        const analysis = ANALYZERS[type](patched);
+        if (!analysis) {
+            patchRow('⊘', c.yellow, label, type, 'Pattern not found — may be incompatible');
+            // Not a hard failure — the pattern might not exist in this file
+            continue;
+        }
+        const count = patched.split(analysis.target).length - 1;
+        if (count !== 1) {
+            patchRow('✖', c.red, label, type, `Target found ${count}× (expected 1)`);
+            anyFailure = true;
+            continue;
+        }
+        patched = patched.replace(analysis.target, analysis.replacement);
+        anyNewPatch = true;
+        patchRow('✔', c.green, label, type, 'Patched successfully');
     }
 
-    const count = content.split(analysis.target).length - 1;
-    if (count !== 1) {
-        row('✖', c.red, `[${label}]`, `Target found ${count}× (expected 1)`);
-        return false;
+    if (anyNewPatch) {
+        // Backup original (before any patching)
+        const bak = filePath + '.bak';
+        if (!fs.existsSync(bak)) {
+            fs.copyFileSync(filePath, filePath + '.bak');
+        }
+        fs.writeFileSync(filePath, patched, 'utf8');
+        const diff = fs.statSync(filePath).size - fs.statSync(filePath + '.bak').size;
+        row('◈', c.blue, `[${label}]`, `Written (+${diff} bytes)`);
     }
 
-    const bak = filePath + '.bak';
-    if (!fs.existsSync(bak)) {
-        fs.copyFileSync(filePath, bak);
-        row('◈', c.blue, `[${label}]`, 'Backup created (.bak)');
-    }
-
-    fs.writeFileSync(filePath, content.replace(analysis.target, analysis.replacement), 'utf8');
-    const diff = fs.statSync(filePath).size - fs.statSync(bak).size;
-    row('✔', c.green, `[${label}]`, `Patched successfully (+${diff} bytes)`);
-    return true;
+    return !anyFailure;
 }
 
 function revertFile(filePath, label) {
@@ -293,22 +436,28 @@ function revertFile(filePath, label) {
 
 function checkFile(filePath, label) {
     if (!fs.existsSync(filePath)) {
-        row('✖', c.red, `[${label}]`, 'File not found');
+        row('⊘', c.gray, `[${label}]`, 'File not found');
         return false;
     }
     const content = fs.readFileSync(filePath, 'utf8');
-    const patched = isPatched(filePath);
+    const status = getPatchStatus(content);
     const hasBak = fs.existsSync(filePath + '.bak');
-    const analysis = !patched ? analyzeFile(content, label) : null;
+    let allPatched = true;
 
-    if (patched) {
-        row('✔', c.green, `[${label}]`, 'PATCHED' + (hasBak ? ' · backup exists' : ''));
-    } else if (analysis) {
-        row('○', c.yellow, `[${label}]`, 'NOT PATCHED · patchable, ready to apply');
-    } else {
-        row('⚠', c.yellow, `[${label}]`, 'NOT PATCHED · may be incompatible');
+    for (const type of PATCH_TYPES) {
+        if (status[type]) {
+            patchRow('✔', c.green, label, type, 'PATCHED' + (hasBak ? ' · backup exists' : ''));
+        } else {
+            const analysis = ANALYZERS[type](content);
+            if (analysis) {
+                patchRow('○', c.yellow, label, type, 'NOT PATCHED · patchable');
+            } else {
+                patchRow('⊘', c.gray, label, type, 'NOT PATCHED · pattern not found');
+            }
+            allPatched = false;
+        }
     }
-    return patched;
+    return allPatched;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -319,6 +468,18 @@ function main() {
         : args.includes('--check') ? 'check'
             : args.includes('--help') ? 'help'
                 : 'apply';
+
+    // Parse --only flag
+    let onlyTypes = null;
+    const onlyIdx = args.indexOf('--only');
+    if (onlyIdx !== -1 && args[onlyIdx + 1]) {
+        const requested = args[onlyIdx + 1].toLowerCase();
+        if (!PATCH_TYPES.includes(requested)) {
+            console.error(`Unknown patch type: ${requested}. Valid types: ${PATCH_TYPES.join(', ')}`);
+            process.exit(1);
+        }
+        onlyTypes = [requested];
+    }
 
     printBanner();
 
@@ -346,7 +507,12 @@ function main() {
             console.log('');
             files.forEach(f => checkFile(f.filePath, f.label));
             console.log('');
-            const allPatched = files.every(f => isPatched(f.filePath));
+            const allPatched = files.every(f => {
+                if (!fs.existsSync(f.filePath)) return true;
+                const content = fs.readFileSync(f.filePath, 'utf8');
+                const s = getPatchStatus(content);
+                return s.terminal && s.browser && s.file;
+            });
             if (allPatched) {
                 console.log('  ' + c.green + c.bold + '✔  AutoPilot is ACTIVE on this machine.' + c.reset);
                 console.log('  ' + c.gray + 'Restart Antigravity for changes to take effect.' + c.reset);
@@ -369,9 +535,10 @@ function main() {
 
         case 'apply':
         default: {
-            section('Applying AutoPilot Patch', '⚡');
+            const typeLabel = onlyTypes ? onlyTypes.join(', ') : 'all';
+            section(`Applying AutoPilot Patch (${typeLabel})`, '⚡');
             console.log('');
-            const ok = files.every(f => patchFile(f.filePath, f.label));
+            const ok = files.every(f => patchFile(f.filePath, f.label, onlyTypes));
             console.log('');
             if (ok) {
                 console.log('  +' + repeat('-', W - 2) + '+');
@@ -379,10 +546,11 @@ function main() {
                 console.log('  |' + pad(c.white + '     Restart Antigravity to activate AutoPilot.' + c.reset, W - 2) + '|');
                 console.log('  |' + repeat(' ', W - 2) + '|');
                 console.log('  |' + pad(c.gray + '  TIP Run with --revert to undo at any time.' + c.reset, W - 2) + '|');
+                console.log('  |' + pad(c.gray + '  TIP Run with --check to see patch status.' + c.reset, W - 2) + '|');
                 console.log('  |' + pad(c.gray + '  NOTE Re-run this command after Antigravity updates.' + c.reset, W - 2) + '|');
                 console.log('  +' + repeat('-', W - 2) + '+');
             } else {
-                console.log('  ' + c.red + c.bold + '✖  Some files could not be patched.' + c.reset);
+                console.log('  ' + c.red + c.bold + '✖  Some patches could not be applied.' + c.reset);
                 console.log('  ' + c.gray + 'Check output above for details.' + c.reset);
                 process.exit(1);
             }
