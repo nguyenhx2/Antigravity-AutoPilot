@@ -4,7 +4,7 @@
   <img src="https://raw.githubusercontent.com/nguyenhx2/Antigravity-AutoPilot/master/icon.png" width="128" alt="Antigravity AutoPilot Logo">
 </p>
 
-> Automatically execute all tool calls and terminal commands in Antigravity — no manual confirmation needed.
+> Automatically execute all tool calls, terminal commands, browser actions, and file permissions in Antigravity — no manual confirmation needed.
 
 [![npm](https://img.shields.io/npm/v/antigravity-autopilot)](https://www.npmjs.com/package/antigravity-autopilot)
 [![GitHub](https://img.shields.io/badge/GitHub-Antigravity--AutoPilot-blue)](https://github.com/nguyenhx2/Antigravity-AutoPilot)
@@ -14,13 +14,21 @@
 
 ## What it does
 
-Antigravity has an **"Always Proceed"** terminal execution policy, but due to a missing `useEffect` in its bundled JS, the policy never actually fires — commands still wait for manual approval.
+Antigravity has an **"Always Proceed"** terminal execution policy, but due to missing `useEffect` hooks in its bundled JS, several actions still wait for manual approval.
 
-**Antigravity AutoPilot** patches the runtime JS bundle to inject the missing auto-accept logic, so every tool call and terminal command runs instantly when the policy is active.
+**Antigravity AutoPilot** patches the runtime JS bundle to inject auto-accept logic for **three** permission types:
+
+| Patch | What it does | Marker |
+|-------|-------------|--------|
+| **Terminal** | Auto-executes terminal commands when EAGER policy is active | `_aep=` |
+| **Browser** | Auto-confirms browser action requests | `_abp=` |
+| **File** | Auto-allows file permission requests (conversation scope) | `_afp=` |
 
 - ✅ Regex-based matching — works across Antigravity versions
 - ✅ Non-destructive — creates `.bak` backup before patching
 - ✅ Reversible — restore originals anytime with `--revert`
+- ✅ Idempotent — safely skips already-patched files (no errors)
+- ✅ Selective — patch all or choose individual types with `--only`
 - ✅ Available as VS Code Extension **and** CLI (`npx`)
 - 🛡️ 54+ built-in dangerous command presets (Linux/macOS/Windows)
 - 🔘 On/Off toggle for Command Blocking directly from sidebar
@@ -31,23 +39,44 @@ Antigravity has an **"Always Proceed"** terminal execution policy, but due to a 
 ## CLI Usage
 
 ```bash
-# Apply the autopilot patch
+# Apply all patches (terminal + browser + file)
 npx antigravity-autopilot
 
-# Check if already patched
+# Apply only a specific patch type
+npx antigravity-autopilot --only terminal
+npx antigravity-autopilot --only browser
+npx antigravity-autopilot --only file
+
+# Check current patch status (per-type detail)
 npx antigravity-autopilot --check
 
 # Revert to original files
 npx antigravity-autopilot --revert
+
+# Show help
+npx antigravity-autopilot --help
+```
+
+### `--check` Output Example
+
+```
+  ✔  [workbench]     terminal  PATCHED · backup exists
+  ✔  [workbench]     browser   PATCHED · backup exists
+  ✔  [workbench]     file      PATCHED · backup exists
+  ✔  [jetskiAgent]   terminal  PATCHED · backup exists
+  ⊘  [jetskiAgent]   browser   NOT PATCHED · pattern not found
+  ⊘  [jetskiAgent]   file      NOT PATCHED · pattern not found
 ```
 
 ### Workflow
 
 ```
-1. npx antigravity-autopilot   →  patch applied
-2. Restart Antigravity          →  AutoPilot active 🚀
-3. npx antigravity-autopilot --revert   →  undo anytime
+1. npx antigravity-autopilot           →  patch applied
+2. Restart Antigravity                  →  AutoPilot active 🚀
+3. npx antigravity-autopilot --revert  →  undo anytime
 ```
+
+> **Note:** Re-run after every Antigravity update, as the patched files are replaced during updates.
 
 ---
 
@@ -57,7 +86,7 @@ Install the extension directly into Antigravity for a UI-based experience (sideb
 
 ```bash
 # Download .vsix from GitHub Releases, then:
-antigravity --install-extension antigravity-autopilot-1.4.0.vsix
+antigravity --install-extension antigravity-autopilot-1.4.6.vsix
 ```
 
 **Extension features:**
@@ -113,13 +142,19 @@ Add your own patterns via Settings:
 
 ## How it works
 
-Antigravity bundles its UI as minified JavaScript. The patch locates the `setTerminalAutoExecutionPolicy` onChange handler and injects a `useEffect` that fires the auto-confirm function whenever the policy is set to `EAGER`:
+Antigravity bundles its UI as minified JavaScript. The patch locates key handler patterns and injects `useEffect` hooks that auto-fire the approval functions:
 
 ```js
-// Injected patch (conceptual):
-useEffect(() => {
+// Terminal: auto-confirm when policy is EAGER
+_aep = useEffect(() => {
   if (policyVar === ENUM.EAGER && !secureMode) confirmFn(true);
 }, []);
+
+// Browser: auto-confirm browser action requests
+_abp = useEffect(() => { confirmFn() }, [confirmFn]);
+
+// File: auto-allow file permission requests (conversation scope)
+_afp = useEffect(() => { senderFn(true, Scope.CONVERSATION) }, [senderFn]);
 ```
 
 Variable names are resolved via regex at runtime, making the patch resilient to minification changes between versions.
