@@ -189,13 +189,170 @@ function analyzeFile(content, label) {
     };
 }
 
+// ─── Browser Action Permission (auto-confirm) ───────────────────────────────
+
+/**
+ * Finds the JPc browser-action confirmation component and builds auto-confirm patch.
+ * Pattern: COMP=({sourceTrajectoryStepInfo:VAR,...,url:VAR})=>{...CONFIRM_FN=Mt(()=>{SEND(Ui(MSG,{...,interaction:{case:"browserAction",value:Ui(TYPE,{confirm:!0})}}))},...)...}
+ */
+function analyzeBrowserAction(content, label) {
+    const log = (msg) => process.send({ type: 'log', msg: `[AutoAccept] [${label}] [browser] ${msg}` });
+
+    // 1. Find the browserAction confirm:!0 callback pattern
+    //    VAR=Mt(()=>{SEND(Ui(MSG,{trajectoryId:VAR,stepIndex:VAR,interaction:{case:"browserAction",value:Ui(TYPE,{confirm:!0})}}))},DEPS)
+    const confirmRe = /(\w+)=Mt\(\(\)=>\{(\w+)\(Ui\((\w+),\{trajectoryId:(\w+),stepIndex:(\w+),interaction:\{case:"browserAction",value:Ui\((\w+),\{confirm:!0\}\)\}\}\)\)\},\[([\w,]*)\]\)/;
+    const confirmMatch = content.match(confirmRe);
+
+    if (!confirmMatch) {
+        log('❌ Could not find browserAction confirm pattern');
+        const idx = content.indexOf('browserAction');
+        if (idx >= 0) {
+            log(`  Context: ...${content.slice(Math.max(0, idx - 80), idx + 120)}...`);
+        }
+        return null;
+    }
+
+    const [fullMatch, confirmVar] = confirmMatch;
+    const matchIndex = content.indexOf(fullMatch);
+    log(`✓ Found browserAction confirm at offset ${matchIndex}`);
+    log(`  confirmVar=${confirmVar}`);
+
+    // 2. Find useEffect alias (reuse from nearby code)
+    const nearbyCode = content.substring(Math.max(0, matchIndex - 5000), matchIndex + 5000);
+    const effectCandidates = {};
+    const effectRe = /\b(\w{2,3})\(\(\)=>\{[^}]{3,80}\},\[/g;
+    let m;
+    while ((m = effectRe.exec(nearbyCode)) !== null) {
+        const alias = m[1];
+        if (alias !== 'Mt' && alias !== 'Vi' && alias !== 'var' && alias !== 'new') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 1;
+        }
+    }
+    const cleanupRe = /\b(\w{2,3})\(\(\)=>\{[^}]*return\s*\(\)=>/g;
+    while ((m = cleanupRe.exec(content)) !== null) {
+        const alias = m[1];
+        if (alias !== 'Mt' && alias !== 'Vi') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 5;
+        }
+    }
+    let useEffectAlias = null;
+    let maxCount = 0;
+    for (const [alias, count] of Object.entries(effectCandidates)) {
+        if (count > maxCount) {
+            maxCount = count;
+            useEffectAlias = alias;
+        }
+    }
+    if (!useEffectAlias) {
+        log('❌ Could not determine useEffect alias');
+        return null;
+    }
+    log(`  useEffect=${useEffectAlias} (confidence: ${maxCount} hits)`);
+
+    // 3. Build patch — auto-call confirmVar() on mount
+    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}]),`;
+
+    return {
+        target: fullMatch,
+        replacement: patchCode + fullMatch,
+        patchMarker: `_abp=${useEffectAlias}(()=>{${confirmVar}()}`,
+        label
+    };
+}
+
+// ─── File Access Permission (auto-allow with conversation scope) ─────────────
+
+/**
+ * Finds the rBe file-permission component and builds auto-allow patch.
+ * Pattern: COMP=({sourceTrajectoryStepInfo:VAR,req:VAR,status:VAR})=>{...SEND_FN...filePermission...scope...}
+ */
+function analyzeFilePermission(content, label) {
+    const log = (msg) => process.send({ type: 'log', msg: `[AutoAccept] [${label}] [file] ${msg}` });
+
+    // 1. Find the filePermission sender pattern
+    //    VAR=(ALLOW_VAR,SCOPE_VAR)=>{SEND(Ui(MSG,{trajectoryId:VAR,stepIndex:VAR,interaction:{case:"filePermission",value:Ui(TYPE,{allow:ALLOW_VAR,scope:SCOPE_VAR,absolutePathUri:REQ.absolutePathUri})}}))};
+    const senderRe = /(\w+)=\((\w+),(\w+)\)=>\{(\w+)\(Ui\((\w+),\{trajectoryId:(\w+),stepIndex:(\w+),interaction:\{case:"filePermission",value:Ui\((\w+),\{allow:\2,scope:\3,absolutePathUri:(\w+)\.absolutePathUri\}\)\}\}\)\)\}/;
+    const senderMatch = content.match(senderRe);
+
+    if (!senderMatch) {
+        log('❌ Could not find filePermission sender pattern');
+        const idx = content.indexOf('filePermission');
+        if (idx >= 0) {
+            log(`  Context: ...${content.slice(Math.max(0, idx - 80), idx + 120)}...`);
+        }
+        return null;
+    }
+
+    const [fullMatch, senderVar, , , , , , , , reqVar] = senderMatch;
+    const matchIndex = content.indexOf(fullMatch);
+    log(`✓ Found filePermission sender at offset ${matchIndex}`);
+    log(`  senderVar=${senderVar}, reqVar=${reqVar}`);
+
+    // 2. Find the scope enum (kot) — look for kot.CONVERSATION or similar near filePermission
+    //    Pattern: o(!0,ENUM.CONVERSATION) in the Allow This Conversation button
+    const scopeRe = new RegExp(`${senderVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\(!0,(\w+)\.CONVERSATION\)`);
+    const scopeMatch = content.substring(matchIndex, matchIndex + 2000).match(scopeRe);
+
+    if (!scopeMatch) {
+        log('❌ Could not find scope enum (CONVERSATION)');
+        return null;
+    }
+    const scopeEnum = scopeMatch[1];
+    log(`  scopeEnum=${scopeEnum}`);
+
+    // 3. Find useEffect alias
+    const nearbyCode = content.substring(Math.max(0, matchIndex - 5000), matchIndex + 5000);
+    const effectCandidates = {};
+    const effectRe = /\b(\w{2,3})\(\(\)=>\{[^}]{3,80}\},\[/g;
+    let m2;
+    while ((m2 = effectRe.exec(nearbyCode)) !== null) {
+        const alias = m2[1];
+        if (alias !== 'Mt' && alias !== 'Vi' && alias !== 'var' && alias !== 'new') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 1;
+        }
+    }
+    const cleanupRe = /\b(\w{2,3})\(\(\)=>\{[^}]*return\s*\(\)=>/g;
+    while ((m2 = cleanupRe.exec(content)) !== null) {
+        const alias = m2[1];
+        if (alias !== 'Mt' && alias !== 'Vi') {
+            effectCandidates[alias] = (effectCandidates[alias] || 0) + 5;
+        }
+    }
+    let useEffectAlias = null;
+    let maxCount = 0;
+    for (const [alias, count] of Object.entries(effectCandidates)) {
+        if (count > maxCount) {
+            maxCount = count;
+            useEffectAlias = alias;
+        }
+    }
+    if (!useEffectAlias) {
+        log('❌ Could not determine useEffect alias');
+        return null;
+    }
+    log(`  useEffect=${useEffectAlias} (confidence: ${maxCount} hits)`);
+
+    // 4. Build patch — auto-call senderVar(!0, scopeEnum.CONVERSATION) on mount
+    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}]),`;
+
+    return {
+        target: fullMatch,
+        replacement: patchCode + fullMatch,
+        patchMarker: `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)`,
+        label
+    };
+}
+
 // ─── File Operations ─────────────────────────────────────────────────────────
 
 function isFilePatched(filePath) {
     if (!fs.existsSync(filePath)) return false;
     try {
         const content = fs.readFileSync(filePath, 'utf8');
-        return content.includes('_aep=') && /_aep=\w+\(\(\)=>\{[^}]+EAGER/.test(content);
+        const hasTerminal = content.includes('_aep=') && /_aep=\w+\(\(\)=>\{[^}]+EAGER/.test(content);
+        const hasBrowser = content.includes('_abp=') && /_abp=\w+\(\(\)=>\{\w+\(\)\}/.test(content);
+        const hasFile = content.includes('_afp=') && /_afp=\w+\(\(\)=>\{\w+\(!0,/.test(content);
+        return hasTerminal || hasBrowser || hasFile;
     } catch {
         return false;
     }
@@ -215,33 +372,77 @@ function patchFile(filePath, label) {
         return false;
     }
 
-    if (isFilePatched(filePath)) {
-        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] Already patched` });
-        return true;
-    }
-
-    const analysis = analyzeFile(content, label);
-    if (!analysis) return false;
-
-    // Verify target uniqueness
-    const count = content.split(analysis.target).length - 1;
-    if (count !== 1) {
-        process.send({ type: 'log', msg: `[AutoAccept] ❌ [${label}] Target found ${count}x (expected 1)` });
-        return false;
-    }
-
-    // Backup original
+    // Backup original (before any patching)
     const bakPath = filePath + '.bak';
     if (!fs.existsSync(bakPath)) {
         fs.copyFileSync(filePath, bakPath);
         process.send({ type: 'log', msg: `[AutoAccept] 📦 [${label}] Backup created` });
     }
 
-    const patched = content.replace(analysis.target, analysis.replacement);
-    fs.writeFileSync(filePath, patched, 'utf8');
+    let patched = content;
+    let anyPatched = false;
 
-    const sizeDiff = fs.statSync(filePath).size - fs.statSync(bakPath).size;
-    process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Patched (+${sizeDiff} bytes)` });
+    // ── Terminal auto-execute patch ──
+    if (!content.includes('_aep=')) {
+        const analysis = analyzeFile(content, label);
+        if (analysis) {
+            const count = patched.split(analysis.target).length - 1;
+            if (count === 1) {
+                patched = patched.replace(analysis.target, analysis.replacement);
+                anyPatched = true;
+                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Terminal auto-execute patched` });
+            } else {
+                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] Terminal target found ${count}x (expected 1)` });
+            }
+        }
+    } else {
+        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] Terminal already patched` });
+    }
+
+    // ── Browser action auto-confirm patch ──
+    if (!patched.includes('_abp=')) {
+        const browserAnalysis = analyzeBrowserAction(patched, label);
+        if (browserAnalysis) {
+            const count = patched.split(browserAnalysis.target).length - 1;
+            if (count === 1) {
+                patched = patched.replace(browserAnalysis.target, browserAnalysis.replacement);
+                anyPatched = true;
+                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] Browser action auto-confirm patched` });
+            } else {
+                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] Browser target found ${count}x (expected 1)` });
+            }
+        }
+    } else {
+        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] Browser action already patched` });
+    }
+
+    // ── File permission auto-allow patch ──
+    if (!patched.includes('_afp=')) {
+        const fileAnalysis = analyzeFilePermission(patched, label);
+        if (fileAnalysis) {
+            const count = patched.split(fileAnalysis.target).length - 1;
+            if (count === 1) {
+                patched = patched.replace(fileAnalysis.target, fileAnalysis.replacement);
+                anyPatched = true;
+                process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] File permission auto-allow patched` });
+            } else {
+                process.send({ type: 'log', msg: `[AutoAccept] ⚠️ [${label}] File target found ${count}x (expected 1)` });
+            }
+        }
+    } else {
+        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] File permission already patched` });
+    }
+
+    if (anyPatched) {
+        fs.writeFileSync(filePath, patched, 'utf8');
+        const sizeDiff = fs.statSync(filePath).size - fs.statSync(bakPath).size;
+        process.send({ type: 'log', msg: `[AutoAccept] ✅ [${label}] All patches applied (+${sizeDiff} bytes)` });
+    } else if (!content.includes('_aep=') && !content.includes('_abp=') && !content.includes('_afp=')) {
+        process.send({ type: 'log', msg: `[AutoAccept] ❌ [${label}] No patches could be applied` });
+        return false;
+    } else {
+        process.send({ type: 'log', msg: `[AutoAccept] ⏭️  [${label}] All patches already applied` });
+    }
     return true;
 }
 
@@ -266,11 +467,23 @@ process.on('message', (msg) => {
             process.exit(0);
             return;
         }
-        const files = getTargetFiles(basePath).map(f => ({
-            label: f.label,
-            patched: isFilePatched(f.filePath),
-            exists: fs.existsSync(f.filePath),
-        }));
+        const files = getTargetFiles(basePath).map(f => {
+            let patchDetails = { terminal: false, browser: false, file: false };
+            if (fs.existsSync(f.filePath)) {
+                try {
+                    const fc = fs.readFileSync(f.filePath, 'utf8');
+                    patchDetails.terminal = fc.includes('_aep=') && /_aep=\w+\(\(\)=>\{[^}]+EAGER/.test(fc);
+                    patchDetails.browser = fc.includes('_abp=') && /_abp=\w+\(\(\)=>\{\w+\(\)\}/.test(fc);
+                    patchDetails.file = fc.includes('_afp=') && /_afp=\w+\(\(\)=>\{\w+\(!0,/.test(fc);
+                } catch { }
+            }
+            return {
+                label: f.label,
+                patched: patchDetails.terminal || patchDetails.browser || patchDetails.file,
+                patchDetails,
+                exists: fs.existsSync(f.filePath),
+            };
+        });
         process.send({ type: 'status', basePath, files });
         process.exit(0);
 

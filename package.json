@@ -2,7 +2,7 @@
   "name": "antigravity-autopilot",
   "displayName": "Antigravity AutoPilot",
   "description": "Enables autopilot mode for Antigravity: automatically executes all tool calls and terminal commands without manual confirmation. Patches the runtime JS bundle to inject auto-accept logic whenever the 'Always Proceed' policy is active — regex-based and version-agnostic.",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "license": "MIT",
   "publisher": "nguyen-hoang",
   "bin": {
@@ -109,6 +109,16 @@
           },
           "default": [],
           "description": "Additional regex patterns (JavaScript syntax) to treat as dangerous commands. Example: [\"^dd if=.*of=/dev/sd\", \"^shred\"]"
+        },
+        "antigravityAutoAccept.autoAcceptBrowserPermission": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically accept browser action permissions (e.g. 'Agent needs permission to act on chromewebdata'). Requires patch to be applied."
+        },
+        "antigravityAutoAccept.autoAcceptFilePermission": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically allow file access permissions with conversation scope. Requires patch to be applied."
         }
       }
     }

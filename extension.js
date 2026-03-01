@@ -343,6 +343,24 @@ class AntigravityPanelProvider {
         vscode.window.showInformationMessage(
           next ? '🛡️ Command Blocking enabled' : '⚠️ Command Blocking disabled',
         );
+      } else if (msg.command === 'toggleBrowserPermission') {
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        const current = cfg.get('autoAcceptBrowserPermission', true);
+        const next = !current;
+        await cfg.update('autoAcceptBrowserPermission', next, vscode.ConfigurationTarget.Global);
+        this.sendBrowserPermissionEnabled(next);
+        vscode.window.showInformationMessage(
+          next ? '🌐 Auto-accept browser permission enabled' : '🌐 Auto-accept browser permission disabled',
+        );
+      } else if (msg.command === 'toggleFilePermission') {
+        const cfg = vscode.workspace.getConfiguration('antigravityAutoAccept');
+        const current = cfg.get('autoAcceptFilePermission', true);
+        const next = !current;
+        await cfg.update('autoAcceptFilePermission', next, vscode.ConfigurationTarget.Global);
+        this.sendFilePermissionEnabled(next);
+        vscode.window.showInformationMessage(
+          next ? '📁 Auto-accept file permission enabled' : '📁 Auto-accept file permission disabled',
+        );
       } else if (msg.command === 'removePattern') {
         // Remove a built-in pattern by ID
         const removed = getRemovedPatternIds();
@@ -363,6 +381,12 @@ class AntigravityPanelProvider {
     this.sendEnabled(autoPilotEnabled);
     this.sendBlockingEnabled(
       vscode.workspace.getConfiguration('antigravityAutoAccept').get('dangerousCommandBlocking.enabled', true),
+    );
+    this.sendBrowserPermissionEnabled(
+      vscode.workspace.getConfiguration('antigravityAutoAccept').get('autoAcceptBrowserPermission', true),
+    );
+    this.sendFilePermissionEnabled(
+      vscode.workspace.getConfiguration('antigravityAutoAccept').get('autoAcceptFilePermission', true),
     );
     this.sendPatterns();
   }
@@ -393,6 +417,18 @@ class AntigravityPanelProvider {
   sendBlockingEnabled(enabled) {
     if (!this._view) return;
     this._view.webview.postMessage({ command: 'setBlockingEnabled', enabled });
+  }
+
+  /** @param {boolean} enabled */
+  sendBrowserPermissionEnabled(enabled) {
+    if (!this._view) return;
+    this._view.webview.postMessage({ command: 'setBrowserPermissionEnabled', enabled });
+  }
+
+  /** @param {boolean} enabled */
+  sendFilePermissionEnabled(enabled) {
+    if (!this._view) return;
+    this._view.webview.postMessage({ command: 'setFilePermissionEnabled', enabled });
   }
 
   /** Send current pattern list to the webview */
@@ -633,6 +669,30 @@ class AntigravityPanelProvider {
   </label>
 </div>
 
+<!-- Browser Permission toggle -->
+<div class="toggle-row" id="browserPermToggleRow">
+  <div>
+    <div class="toggle-label">🌐 Browser Permission</div>
+    <div class="toggle-sub" id="browserPermToggleSub">Active — auto-accepting browser actions</div>
+  </div>
+  <label class="switch" title="Toggle auto-accept browser permission">
+    <input type="checkbox" id="browserPermToggleCheck" checked onchange="send('toggleBrowserPermission')">
+    <span class="slider"></span>
+  </label>
+</div>
+
+<!-- File Permission toggle -->
+<div class="toggle-row" id="filePermToggleRow">
+  <div>
+    <div class="toggle-label">📁 File Permission</div>
+    <div class="toggle-sub" id="filePermToggleSub">Active — auto-allowing file access</div>
+  </div>
+  <label class="switch" title="Toggle auto-accept file permission">
+    <input type="checkbox" id="filePermToggleCheck" checked onchange="send('toggleFilePermission')">
+    <span class="slider"></span>
+  </label>
+</div>
+
 <!-- Dangerous Command Blocking section -->
 <div class="section" id="blockSection">
   <div class="section-header" id="blockHeader">
@@ -660,6 +720,7 @@ class AntigravityPanelProvider {
 
   function send(cmd, extra) {
     if (cmd !== 'openSettings' && cmd !== 'toggleEnabled' && cmd !== 'toggleCommandBlocking'
+        && cmd !== 'toggleBrowserPermission' && cmd !== 'toggleFilePermission'
         && cmd !== 'refresh' && cmd !== 'removePattern' && cmd !== 'resetPatterns') {
       document.getElementById('btnApply').disabled = true;
       document.getElementById('btnRevert').disabled = true;
@@ -749,6 +810,22 @@ class AntigravityPanelProvider {
       // Dim the presets section when blocking is off
       const section = document.getElementById('blockSection');
       if (section) section.style.opacity = data.enabled ? '1' : '0.4';
+    }
+
+    if (data.command === 'setBrowserPermissionEnabled') {
+      const chk = document.getElementById('browserPermToggleCheck');
+      chk.checked = data.enabled;
+      document.getElementById('browserPermToggleSub').textContent = data.enabled
+        ? 'Active — auto-accepting browser actions'
+        : 'Disabled — browser actions require confirmation';
+    }
+
+    if (data.command === 'setFilePermissionEnabled') {
+      const chk = document.getElementById('filePermToggleCheck');
+      chk.checked = data.enabled;
+      document.getElementById('filePermToggleSub').textContent = data.enabled
+        ? 'Active — auto-allowing file access'
+        : 'Disabled — file access requires confirmation';
     }
 
     if (data.command === 'patterns') {
