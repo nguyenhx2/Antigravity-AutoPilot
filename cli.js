@@ -283,7 +283,7 @@ function analyzeBrowser(content) {
     const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}]),`;
     return {
         target: fullMatch,
-        replacement: patchCode + fullMatch,
+        replacement: fullMatch + ',' + patchCode,
         patchMarker: `_abp=${useEffectAlias}(()=>{${confirmVar}()}`,
     };
 }
@@ -332,7 +332,7 @@ function analyzeFile_(content) {
     const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}]),`;
     return {
         target: fullMatch,
-        replacement: patchCode + fullMatch,
+        replacement: fullMatch + ',' + patchCode,
         patchMarker: `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)`,
     };
 }

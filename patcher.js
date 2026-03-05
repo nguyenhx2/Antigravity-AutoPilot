@@ -254,7 +254,7 @@ function analyzeBrowserAction(content, label) {
 
     return {
         target: fullMatch,
-        replacement: patchCode + fullMatch,
+        replacement: fullMatch + ',' + patchCode,
         patchMarker: `_abp=${useEffectAlias}(()=>{${confirmVar}()}`,
         label
     };
@@ -337,7 +337,7 @@ function analyzeFilePermission(content, label) {
 
     return {
         target: fullMatch,
-        replacement: patchCode + fullMatch,
+        replacement: fullMatch + ',' + patchCode,
         patchMarker: `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)`,
         label
     };
