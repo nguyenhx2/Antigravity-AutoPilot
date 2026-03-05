@@ -240,7 +240,7 @@ function analyzeTerminal(content) {
     const patchCode = `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER&&!${secureVar}&&${confirmFn}(!0)},[]),`;
     return {
         target: fullMatch,
-        replacement: patchCode + fullMatch,
+        replacement: fullMatch + ',' + patchCode,
         patchMarker: `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER`,
     };
 }
