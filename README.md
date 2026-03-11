@@ -105,7 +105,7 @@ Install the extension directly into Antigravity for a UI-based experience (sideb
 
 ```bash
 # Download .vsix from GitHub Releases, then:
-antigravity --install-extension antigravity-autopilot-1.4.8.vsix
+antigravity --install-extension antigravity-autopilot-1.4.12.vsix
 ```
 
 **Extension features:**

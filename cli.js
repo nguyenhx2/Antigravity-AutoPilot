@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity AutoPilot — CLI v1.4.0
+ * Antigravity AutoPilot — CLI v1.4.12
  * ====================================
  *   npx antigravity-autopilot                Apply all patches
  *   npx antigravity-autopilot --only terminal  Patch terminal only
@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 // ─── ANSI Colors (auto-disable when not a TTY) ───────────────────────────────
 
@@ -193,6 +194,54 @@ function getVersion(basePath) {
         const product = JSON.parse(fs.readFileSync(path.join(basePath, 'resources', 'app', 'product.json'), 'utf8'));
         return `${pkg.version} (IDE ${product.ideVersion})`;
     } catch { return 'unknown'; }
+}
+
+// ─── Checksum Update ─────────────────────────────────────────────────────────
+
+/**
+ * Map from getTargetFiles label to the checksum key used in product.json.
+ * product.json stores checksums relative to resources/app/out/.
+ */
+const CHECKSUM_KEY_MAP = {
+    workbench: 'vs/workbench/workbench.desktop.main.js',
+    jetskiAgent: 'jetskiAgent/main.js',
+};
+
+/**
+ * Recalculates SHA-256 Base64 checksums for the target files and writes
+ * them back into product.json so the "jes" integrity service no longer
+ * flags the installation as corrupt.
+ */
+function updateProductChecksums(basePath, files) {
+    const productPath = path.join(basePath, 'resources', 'app', 'product.json');
+    try {
+        const product = JSON.parse(fs.readFileSync(productPath, 'utf8'));
+        if (!product.checksums || typeof product.checksums !== 'object') {
+            row('⊘', c.gray, '[checksums]', 'No checksums object in product.json — skipping');
+            return;
+        }
+
+        let updated = 0;
+        for (const { filePath, label } of files) {
+            const key = CHECKSUM_KEY_MAP[label];
+            if (!key || !product.checksums.hasOwnProperty(key)) continue;
+            if (!fs.existsSync(filePath)) continue;
+
+            const content = fs.readFileSync(filePath);
+            const hash = crypto.createHash('sha256').update(content).digest('base64');
+            product.checksums[key] = hash;
+            updated++;
+        }
+
+        if (updated > 0) {
+            fs.writeFileSync(productPath, JSON.stringify(product, null, '\t'), 'utf8');
+            row('✔', c.green, '[checksums]', `Updated ${updated} checksum(s) in product.json`);
+        } else {
+            row('⊘', c.gray, '[checksums]', 'No matching checksum keys found — skipping');
+        }
+    } catch (err) {
+        row('⊘', c.yellow, '[checksums]', `Could not update checksums: ${err.message}`);
+    }
 }
 
 // ─── Analyze: Terminal Auto-Execute ───────────────────────────────────────────
@@ -527,6 +576,7 @@ function main() {
             section('Reverting Patch', '↩');
             console.log('');
             files.forEach(f => revertFile(f.filePath, f.label));
+            updateProductChecksums(basePath, files);
             console.log('');
             console.log('  ' + c.green + c.bold + '✔  Restored!' + c.reset + c.white + '  Restart Antigravity to apply changes.' + c.reset);
             console.log('');
@@ -539,6 +589,7 @@ function main() {
             section(`Applying AutoPilot Patch (${typeLabel})`, '⚡');
             console.log('');
             const ok = files.every(f => patchFile(f.filePath, f.label, onlyTypes));
+            updateProductChecksums(basePath, files);
             console.log('');
             if (ok) {
                 console.log('  +' + repeat('-', W - 2) + '+');
