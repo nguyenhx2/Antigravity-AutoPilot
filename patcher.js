@@ -179,7 +179,7 @@ function analyzeFile(content, label) {
     log(`  useEffect=${useEffectAlias} (confidence: ${maxCount} hits)`);
 
     // 5. Build patch — exact same logic as original
-    const patchCode = `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER&&!${secureVar}&&${confirmFn}(!0)},[]),`;
+    const patchCode = `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER&&!${secureVar}&&${confirmFn}(!0)},[])`;
 
     return {
         target: fullMatch,
@@ -250,7 +250,7 @@ function analyzeBrowserAction(content, label) {
     log(`  useEffect=${useEffectAlias} (confidence: ${maxCount} hits)`);
 
     // 3. Build patch — auto-call confirmVar() on mount
-    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}]),`;
+    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}])`;
 
     return {
         target: fullMatch,
@@ -333,7 +333,7 @@ function analyzeFilePermission(content, label) {
     log(`  useEffect=${useEffectAlias} (confidence: ${maxCount} hits)`);
 
     // 4. Build patch — auto-call senderVar(!0, scopeEnum.CONVERSATION) on mount
-    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}]),`;
+    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}])`;
 
     return {
         target: fullMatch,

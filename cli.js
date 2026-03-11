@@ -237,7 +237,7 @@ function analyzeTerminal(content) {
     }
     if (!useEffectAlias) return null;
 
-    const patchCode = `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER&&!${secureVar}&&${confirmFn}(!0)},[]),`;
+    const patchCode = `_aep=${useEffectAlias}(()=>{${policyVar}===${enumAlias}.EAGER&&!${secureVar}&&${confirmFn}(!0)},[])`;
     return {
         target: fullMatch,
         replacement: fullMatch + ',' + patchCode,
@@ -280,7 +280,7 @@ function analyzeBrowser(content) {
     }
     if (!useEffectAlias) return null;
 
-    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}]),`;
+    const patchCode = `_abp=${useEffectAlias}(()=>{${confirmVar}()},[${confirmVar}])`;
     return {
         target: fullMatch,
         replacement: fullMatch + ',' + patchCode,
@@ -329,7 +329,7 @@ function analyzeFile_(content) {
     }
     if (!useEffectAlias) return null;
 
-    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}]),`;
+    const patchCode = `_afp=${useEffectAlias}(()=>{${senderVar}(!0,${scopeEnum}.CONVERSATION)},[${senderVar}])`;
     return {
         target: fullMatch,
         replacement: fullMatch + ',' + patchCode,
